@@ -142,43 +142,53 @@ NXLog's and the domain controller's behaviour, not this plugin's:
 
 On 2026-11-18, from this branch, away from an appliance - the checks, run under Python 3.14 and PHP 8.5:
 
-- **the domain controllers' lines** - `tools/test-events.py`, 89 checks: the 25 lines of phase 0's lab
+- **the domain controllers' lines** - `tools/test-events.py`, 102 checks: the 25 lines of phase 0's lab
   (A2, A6, A4) in `tools/fixtures/lab-events.txt`, every address made a documentation one, every name an
   example, each read as the lab saw it - tickets and network logons map, computer accounts, SYSTEM and
   the virtual accounts, a logon with no address, a logoff and a service ticket do not - and lines made
-  from them: a refused ticket, loopback, link-local, multicast, broadcast and unspecified addresses,
-  IPv6, a name written `user@REALM` or `DOMAIN\name`, a syslog header before the JSON, EventTime in two
-  time zones and in ISO form, the stale window's edges, the firewall's and a domain controller's
-  addresses, Never map, Ignore users;
-- **the map and its tables** - `tools/test-engine.py`, 70 checks: join, renew, latest wins and the shared
-  mark, an older event noted, the lifetime's end, the MAC check, the flush, the lab's A6 - three logons
-  on one client in a row - played through, the tables of groups and of users, pf through a stand-in
-  (64 addresses a call, a failure said, the tables of aliases gone killed), the log's counts without
-  names, the history and its pruning, the map's file and lock, FreeBSD's `ifconfig -a`, `arp -an` and
-  `ndp -an` output, and the settings read from a `config.xml` fixture;
-- **the directory** - `tools/test-ldap.py`, 38 checks against a stand-in of ldap3: the filter's escaping
+  from them: a refused ticket, a ticket with no pre-authentication, loopback, link-local, multicast,
+  broadcast and unspecified addresses, IPv6, a name written `user@REALM` or `DOMAIN\name`, a syslog
+  header before the JSON, EventTime in two time zones, in ISO form and in UTC with its zone as the
+  page's NXLog configuration sends it, the stale window's edges, the firewall's and a domain
+  controller's addresses, Never map, Ignore users, a line nested deeper than json reads; and that
+  configuration on the page - DateFormat, delete($Message), the note saying what they do, the longest of
+  the lab's lines without its text well within one datagram;
+- **the map and its tables** - `tools/test-engine.py`, 74 checks: join, renew, latest wins and the
+  shared mark, an older event noted, the lifetime's end, the MAC check, the MAC forgotten when another
+  user takes the address, the flush, the lab's A6 - three logons on one client in a row - played
+  through, the tables of groups and of users, pf through a stand-in (64 addresses a call, a failure
+  said, the tables of aliases gone killed), the log's counts without names, the history and its pruning,
+  the map's file, its writer and its lock, FreeBSD's `ifconfig -a`, `arp -an` and `ndp -an` output, and
+  the settings read from a `config.xml` fixture;
+- **the directory** - `tools/test-ldap.py`, 44 checks against a stand-in of ldap3: the filter's escaping
   of a name or a DN, the filters from the entry of System: Access: Servers, TLS for StartTLS, SSL and
   Standard with OPNsense's CA file, direct and nested membership, a group not there, a server refusing
-  the in-chain rule asked it no more, Nested groups off, the Test's answer, a refused bind with the
-  password taken out. Its last part runs ldap3 2.9.1's own constructors and filter code, where ldap3 is
-  installed - in CI; it was not installed here, so that part has not run yet;
-- **the service** - `tools/test-service.py`, 64 checks in a temporary directory: syslog-ng's source
+  the in-chain rule - by one of the result codes of a refusal - asked it no more, a timeout or a busy
+  server not taken for a refusal, Nested groups off, the Test's answer, a refused bind with the password
+  taken out. Its last part runs ldap3 2.9.1's own constructors and filter code, where ldap3 is
+  installed, in CI; it was not installed here, so that part has not run yet;
+- **the service** - `tools/test-service.py`, 74 checks in a temporary directory: syslog-ng's source
   written, kept, refused for a port in use, a port it may not take, sockstat unreadable and syslog-ng's
-  check refusing it, taken away when off; the collector reading the lab's lines through a real datagram
+  check refusing it, with the file before put back and syslog-ng not restarted, its socket opened again
+  after one second, taken away when off; the collector reading the lab's lines through a real datagram
   socket, its counts by reason, a machine that is no domain controller refused, the directory's answer
   filling a group's table, latest wins emptying a user's, no directory asked when none is chosen, its
-  answers forgotten once their users leave the map; the minute's run, Forget all, the plugin off and a
-  switched-off alias's table kept empty; the alerts; what `status.py` gives the page;
+  answers forgotten once their users leave the map, a change of the group rows keeping them, marked old,
+  and asking every mapped user again at once, a logon after the minute's run written at once; the
+  minute's run, Forget all, the plugin off and a switched-off alias's table kept empty; the alerts; what
+  `status.py` gives the page;
 - **the firewall hook** - `tools/test-firewall-hook.py`, 32 checks, os-xgs-npu's harness: the redirects
   through each OPNsense's own method name (26.7, 26.7.3 to 26.7.8, 27.1), a bad domain controller entry
   left out, a refusing object not stopping the reload, nothing while off or with the source not there,
   nothing on a port the firewall itself serves - SSH, DNS, the web GUI, and where the web GUI or SSH is
   moved - nor without the library that says which those are;
-- **the aliases** - `tools/test-aliases.php`, 34 checks, with stand-ins for OPNsense's Alias model whose
+- **the aliases** - `tools/test-aliases.php`, 47 checks, with stand-ins for OPNsense's Alias model whose
   validation is OPNsense 26.7's own for the fields written, pf's reserved words included: the names
   proposed - Latin, spaced, in another script, too long, taken - each taken by that validation; aliases
-  made, switched off where a rule names them; XGS: Settings' cut list keeping the owner's entries; and
-  `aliases.php` run as configd runs it;
+  made, switched off where a rule names them, the plugin's own rows not counted as naming them,
+  described in at most 255 bytes; XGS: Settings' cut list keeping the owner's entries, each table put
+  there once and recorded, one the owner took out not put back; and `aliases.php` run as configd runs
+  it;
 - **the model** - `tools/test-model.php`, 13 checks, with stand-ins for OPNsense's BaseModel and Config:
   the port the domain controllers send to refused when the firewall itself serves it - 22, 53, 80, 443,
   and the ports the web GUI and SSH are moved to - only when it is changed or the whole model checked,
@@ -191,12 +201,13 @@ On 2026-11-18, from this branch, away from an appliance - the checks, run under 
   taken away, the menu at XGS 60 or under Firewall, nothing copied with a syntax error, syslog-ng's
   source taken away by every removal, nothing done by the old package in an upgrade;
 - **the self-update** - `tools/test-self-update.py`, 45 checks, as os-blocklists has it;
-- **the strings** - `tools/check-strings.py`: each of the 147 strings the GUI shows is in `source.json`;
-  35 have their Arabic in opnsense-arabic already, the other 112 wait for it there;
+- **the strings** - `tools/check-strings.py`: each of the 150 strings the GUI shows is in `source.json`;
+  35 have their Arabic in opnsense-arabic already, the other 115 wait for it there;
 - **the rest** - every installed file removed by the uninstaller (`tools/check-uninstall.sh`), `php -l`,
-  `py_compile` and pyflakes, `sh -n`, XML and JSON, nothing private, no Arabic in the code, the copyright
-  line; and, by hand, the page kit (kit) and the page's script run under node with a stand-in jQuery -
-  a status, an error, no answer, the plugin off, the source not written, and each grid's formatters.
+  `py_compile` and pyflakes, `sh -n`, XML and JSON, nothing private, no Arabic in the code, the
+  copyright line; and, by hand, the page kit (kit) and the page's script run under node with a stand-in
+  jQuery - a status, an error, no answer, the plugin off, the source not written, and each grid's
+  formatters.
 
 Not tested: anything on an appliance or a plain OPNsense (above).
 
