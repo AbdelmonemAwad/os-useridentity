@@ -305,6 +305,35 @@ try:
                                'user9': {'in': [], 'at': when - 10}}
     check('the directory\'s answers for users no longer mapped forgotten after 15 minutes - only the live map is kept',
           (service.prune_groups(when), sorted(engine.read_json(collector.GROUPS, {})['users'])), (1, ['user1', 'user9']))
+
+    # a group row added: the answers kept but marked old, every user in the map asked again at once -
+    # no table emptied meanwhile, nor fought over with the minute's run (the review's first finding)
+    module.fail = False
+    service.directory.failed_at = 0.0
+    module.asked.clear()
+    rows = open(config, encoding='utf-8').read()
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(rows.replace('</groups>', '<group uuid="11111111-0000-4000-8000-000000000003"><enabled>1</enabled>'
+                                               '<name>G-Sales</name><alias>uid_grp_G_Sales</alias><description/></group>'
+                                               '</groups>'))
+    os.utime(config, (time.time() + 10, time.time() + 10))
+    service.refresh(time.time())
+    kept_answer = engine.read_json(collector.GROUPS, {})['users'].get('user1', {})
+    check('a group row added: what the directory said kept, marked old, on the disk too',
+          (kept_answer.get('in'), kept_answer.get('at')), (['g-staff'], 0))
+    with engine.locked():
+        service.write_tables(engine.load())
+    check('a group row added: G-Staff\'s table not emptied while the directory is asked again',
+          pf.held.get('uid_grp_G_Staff'), {'192.0.2.30'})
+    check('a group row added: every user in the map asked again at once',
+          wait_for(lambda: any('user1' in q for q in module.asked)), True)
+    wait_for(lambda: not service.directory.answers.empty())
+    service.answers(when)
+    check('a group row added: the new answer kept, and the tables as the map says',
+          (engine.read_json(collector.GROUPS, {})['users']['user1']['at'] > 0, pf.held.get('uid_grp_G_Staff')),
+          (True, {'192.0.2.30'}))
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(rows)
     service.close()
     check('closed: the socket taken away', os.path.exists(sock_path), False)
     sender.close()

@@ -218,14 +218,34 @@ class Collector:
         self.sources = Sources(now=now)
         self.groups = engine.read_json(GROUPS, {})
         self.groups_dirty = False
-        if self.groups.get('rows') != rows_key(self.conf):
-            self.groups = {'rows': rows_key(self.conf), 'users': {}, 'server': self.groups.get('server', {})}
-        self.groups.setdefault('users', {})
+        if not isinstance(self.groups.get('users'), dict):
+            self.groups['users'] = {}
         self.ldap_failing = False
         self.written = {}
         self.directory = Asker(self.conf, ldap3=ldap3)
         self.directory.start()
         self.sock = None
+        if self.groups.get('rows') != rows_key(self.conf):
+            self.rows_changed()
+
+    def asking(self):
+        """Whether the directory is asked at all: one chosen and a group row on - a user row needs no group,
+        and no directory chosen is no failure to alert about."""
+        return bool(self.conf.get('server')) and any(row['enabled'] for row in self.conf['groups'])
+
+    def rows_changed(self):
+        """Settings' group rows or Nested changed: what the directory said of each user is kept - so no
+        table goes empty meanwhile, and this and the minute's run, which reads groups.json, never write
+        two answers in turn - but marked old and written down at once, and every user in the map asked
+        again now, not at its next event."""
+        for known in self.groups['users'].values():
+            if isinstance(known, dict):
+                known['at'] = 0
+        self.groups['rows'] = rows_key(self.conf)
+        engine.write_json(GROUPS, self.groups, mode=0o640)
+        if self.asking():
+            for user in sorted({entry['user'] for entry in engine.load()['map'].values()}):
+                self.directory.ask(user)
 
     @staticmethod
     def config_mtime():
@@ -279,7 +299,7 @@ class Collector:
             self.present = tables.present(settings.aliases())
             self.directory.update(self.conf)
             if self.groups.get('rows') != rows_key(self.conf):
-                self.groups = {'rows': rows_key(self.conf), 'users': {}, 'server': self.groups.get('server', {})}
+                self.rows_changed()
             self.written = {}
         if now - self.own_at >= REFRESH:
             own, broadcast = self.addresses()
@@ -336,8 +356,7 @@ class Collector:
             engine.save(state)
             self.write_tables(state)
         self.after(changes, now)
-        # the directory is asked only with one chosen and a group row on: a user row needs no group
-        if self.conf.get('server') and any(row['enabled'] for row in self.conf['groups']):
+        if self.asking():
             for user in sorted({event['user'] for _, event in accepted}):
                 known = self.groups['users'].get(user)
                 if known is None or now - known.get('at', 0) >= CACHE:
