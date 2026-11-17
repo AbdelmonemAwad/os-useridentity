@@ -39,10 +39,14 @@ def check(name, got, want):
 
 
 class Refused(Exception):
-    pass
+    """As ldap3's LDAPOperationResult: the server's answer, its result code in result."""
+
+    def __init__(self, text, result=None):
+        super().__init__(text)
+        self.result = result
 
 
-def standin(directory, refuse_chain=False, fail_bind=None):
+def standin(directory, refuse_chain=False, fail_bind=None, chain_error=None):
     """A module that looks like ldap3 as far as ldap_groups.py uses it. directory: {dn: {'memberOf': [...],
     'cn': ..., 'sAMAccountName': ..., 'objectClass': ..., 'chain': [group DNs it is in, nested included]}}.
     Every call is written down in module.calls."""
@@ -81,7 +85,9 @@ def standin(directory, refuse_chain=False, fail_bind=None):
             self.response = [{'type': 'searchResDone'}]
             if query.startswith('(memberOf:%s:=' % ldap_groups.IN_CHAIN):
                 if refuse_chain:
-                    raise Refused('inappropriateMatching')
+                    raise Refused('inappropriateMatching', result=18)
+                if chain_error is not None:
+                    raise chain_error
                 group = unescape(query[len('(memberOf:%s:=' % ldap_groups.IN_CHAIN):-1])
                 entry = directory.get(base)
                 if entry and any(ldap_groups.same_dn(group, g) for g in entry.get('chain', [])):
@@ -256,6 +262,25 @@ module.calls.clear()
 ldap_groups.lookup(directory, 'user1', ROWS, nested=True)
 check('and it is asked the rule no more',
       [c for c in module.calls if c[0] == 'search' and c[2].startswith('(memberOf:')], [])
+# a server that did not answer, or was busy, did not refuse the rule: the error goes up, so the
+# connection is made again, and the rule is asked next time (the review's ninth finding)
+for what, error in (('a timeout', TimeoutError('timed out')), ('busy, result 51', Refused('busy', result=51)),
+                    ('unavailable, result 52', Refused('unavailable', result=52))):
+    directory = ldap_groups.Directory(ENTRY, ldap3=standin(DIRECTORY, chain_error=error))
+    directory.connect()
+    try:
+        ldap_groups.lookup(directory, 'user3', ROWS, nested=True)
+        raised = None
+    except Exception as caught:                                          # noqa: BLE001
+        raised = caught
+    check('the in-chain question met with %s: the error raised, the rule not taken as refused' % what,
+          (raised is error, directory.chain), (True, 'unknown'))
+for code in (12, 18, 53):
+    directory = ldap_groups.Directory(ENTRY, ldap3=standin(DIRECTORY, chain_error=Refused('refused', result=code)))
+    directory.connect()
+    found = ldap_groups.lookup(directory, 'user3', ROWS, nested=True)
+    check('the in-chain rule refused with result %d: said as refused, memberOf decides' % code,
+          (directory.chain, found['groups']['G-Staff']), ('refused', 'no'))
 
 # the page's Test
 conf = settings.read(os.path.join(ROOT, 'tools', 'fixtures', 'config.xml'))

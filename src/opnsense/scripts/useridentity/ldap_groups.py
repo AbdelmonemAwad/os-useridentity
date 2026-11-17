@@ -40,6 +40,10 @@ import settings                                                          # noqa:
 
 CA_FILE = '/usr/local/etc/ssl/cert.pem'
 IN_CHAIN = '1.2.840.113556.1.4.1941'
+# The result codes a server answers a matching rule it does not know with (RFC 4511): protocolError,
+# unavailableCriticalExtension, undefinedAttributeType, inappropriateMatching, unwillingToPerform. ldap3
+# raises an LDAPOperationResult carrying the code in its result.
+REFUSED_CODES = (2, 12, 17, 18, 53)
 TIMEOUT = 5
 GROUP_CLASSES = '(|(objectClass=group)(objectClass=groupOfNames)(objectClass=groupOfUniqueNames)(objectClass=posixGroup))'
 
@@ -157,14 +161,18 @@ class Directory:
         return found
 
     def in_chain(self, user_dn, group_dn):
-        """True or False by the in-chain rule; None when the server refuses it - not asked again."""
+        """True or False by the in-chain rule; None when the server refuses it - by one of REFUSED_CODES,
+        and then it is not asked again. Any other error - a timeout, a server busy or gone - is not a
+        refusal of the rule: it is raised, so the connection is made again and the rule asked next time."""
         if self.chain == 'refused':
             return None
         try:
             hits = self.entries(user_dn, '(memberOf:%s:=%s)' % (IN_CHAIN, escape(group_dn)), self.ldap3.BASE, ['cn'])
-        except Exception:                                                # noqa: BLE001
-            self.chain = 'refused'
-            return None
+        except Exception as error:                                       # noqa: BLE001
+            if getattr(error, 'result', None) in REFUSED_CODES:
+                self.chain = 'refused'
+                return None
+            raise
         self.chain = 'used'
         return bool(hits)
 
