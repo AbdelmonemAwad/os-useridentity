@@ -154,12 +154,13 @@ On 2026-11-18, from this branch, away from an appliance - the checks, run under 
   the in-chain rule asked it no more, Nested groups off, the Test's answer, a refused bind with the
   password taken out. Its last part runs ldap3 2.9.1's own constructors and filter code, where ldap3 is
   installed - in CI; it was not installed here, so that part has not run yet;
-- **the service** - `tools/test-service.py`, 62 checks in a temporary directory: syslog-ng's source
+- **the service** - `tools/test-service.py`, 64 checks in a temporary directory: syslog-ng's source
   written, kept, refused for a port in use, a port it may not take, sockstat unreadable and syslog-ng's
   check refusing it, taken away when off; the collector reading the lab's lines through a real datagram
   socket, its counts by reason, a machine that is no domain controller refused, the directory's answer
-  filling a group's table, latest wins emptying a user's; the minute's run, Forget all, the plugin off
-  and a switched-off alias's table kept empty; the alerts; what `status.py` gives the page;
+  filling a group's table, latest wins emptying a user's, no directory asked when none is chosen, its
+  answers forgotten once their users leave the map; the minute's run, Forget all, the plugin off and a
+  switched-off alias's table kept empty; the alerts; what `status.py` gives the page;
 - **the firewall hook** - `tools/test-firewall-hook.py`, 24 checks, os-xgs-npu's harness: the redirects
   through each OPNsense's own method name (26.7, 26.7.3 to 26.7.8, 27.1), a bad domain controller entry
   left out, a refusing object not stopping the reload, nothing while off or with the source not there;
