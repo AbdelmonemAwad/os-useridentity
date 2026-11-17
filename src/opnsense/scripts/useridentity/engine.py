@@ -1,0 +1,275 @@
+#!/usr/local/bin/python3
+#-
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
+#
+"""The live map: which user each address belongs to, kept in /var/db/os-useridentity/map.json, and
+the pf tables that follow from it. Only the live map is kept (settled point 14); what came before is
+written down only when Settings keeps a history.
+
+An address's entry:
+
+    user     the user it is mapped to, in lower case        domain   as the event wrote it
+    source   the domain controller the event came from        event    its ID, 4768 or 4624
+    first    when it was mapped to this user                  last     the last event that renewed it
+    expires  last and the lifetime: then it leaves the map    mac      the first MAC the firewall's ARP
+                                                                       or NDP table gave it while mapped
+    others   {user: last} the other users an event put on it within the lifetime - shared when any
+
+The rules (settled points 7 and 8):
+
+- join: an address not in the map is mapped to the event's user;
+- renew: an event of the same user moves last and expires on;
+- latest wins: an event of another user, no older than the last one, maps the address to that user,
+  and the one before goes into others: the address is shared - a runas or a service logon on a client
+  does this while another user sits at its console (the lab's A6). An older event of another user is
+  only noted in others;
+- leave: at the lifetime's end; when the address's MAC in ARP is not the one it had (another device
+  took it); or when the owner forgets every mapping. A domain controller says nothing at a logoff
+  (the lab's A2), so nothing else takes an address out.
+
+Times are the events' own, never later than their arrival, so an event sent late renews no further
+than when it happened. The map is changed by the collector for each batch of events and by expire.py
+every minute, each under the lock, each reading it again first.
+"""
+
+import contextlib
+import fcntl
+import json
+import os
+import tempfile
+import time
+
+STATE = '/var/db/os-useridentity'
+MAP = STATE + '/map.json'
+LOCK = STATE + '/lock'
+HISTORY = STATE + '/history'
+
+
+@contextlib.contextmanager
+def locked(path=LOCK, wait=30.0):
+    """The map's lock, held for the with block; waits up to wait seconds, then goes on without it
+    rather than stop - the map is written whole each time, so the worst is one change lost."""
+    os.makedirs(os.path.dirname(path), mode=0o750, exist_ok=True)
+    handle = open(path, 'a')
+    until = time.monotonic() + wait
+    held = False
+    try:
+        while True:
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                held = True
+                break
+            except OSError:
+                if time.monotonic() >= until:
+                    break
+                time.sleep(0.05)
+        yield held
+    finally:
+        if held:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
+def write_json(path, data, mode=0o640):
+    """Written whole beside it and put in place in one step: a reader never meets half of it."""
+    folder = os.path.dirname(path)
+    os.makedirs(folder, mode=0o750, exist_ok=True)
+    handle, temporary = tempfile.mkstemp(dir=folder, prefix='.' + os.path.basename(path) + '.')
+    try:
+        with os.fdopen(handle, 'w', encoding='utf-8') as stream:
+            json.dump(data, stream, sort_keys=True)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    except Exception:
+        with contextlib.suppress(OSError):
+            os.unlink(temporary)
+        raise
+
+
+def read_json(path, default):
+    try:
+        with open(path, encoding='utf-8') as handle:
+            found = json.load(handle)
+        return found if isinstance(found, type(default)) else default
+    except (OSError, ValueError):
+        return default
+
+
+def load(path=MAP):
+    state = read_json(path, {})
+    entries = state.get('map') if isinstance(state.get('map'), dict) else {}
+    clean = {}
+    for address, entry in entries.items():
+        if isinstance(entry, dict) and entry.get('user'):
+            entry.setdefault('others', {})
+            entry.setdefault('mac', '')
+            clean[address] = entry
+    return {'version': 1, 'map': clean}
+
+
+def save(state, path=MAP):
+    write_json(path, {'version': 1, 'map': state['map'], 'saved': int(time.time())})
+
+
+def shared(entry, now, lifetime):
+    """True when another user was put on the address within the lifetime."""
+    return any(user != entry['user'] and last > now - lifetime for user, last in entry.get('others', {}).items())
+
+
+def see(state, event, arrival, lifetime, source=''):
+    """The map after one accepted event: [(change, address, detail)], change one of joined, renewed,
+    changed (detail: (user before, user now)), noted (another user's older event) and shared (the
+    address became shared: detail the users on it)."""
+    when = min(event['time'], arrival)
+    where, user = event['address'], event['user']
+    entries = state['map']
+    entry = entries.get(where)
+    if entry is None:
+        entries[where] = {'user': user, 'domain': event.get('domain', ''), 'source': source,
+                          'event': event['id'], 'first': when, 'last': when, 'expires': when + lifetime,
+                          'mac': '', 'others': {}}
+        return [('joined', where, user)]
+    if entry['user'] == user:
+        if when > entry['last']:
+            entry['last'] = when
+            entry['expires'] = when + lifetime
+        entry.update(domain=event.get('domain', entry.get('domain', '')), source=source or entry.get('source', ''),
+                     event=event['id'])
+        return [('renewed', where, user)]
+    before = shared(entry, arrival, lifetime)
+    others = entry.setdefault('others', {})
+    if when >= entry['last']:
+        old = entry['user']
+        others[old] = max(others.get(old, 0), entry['last'])
+        others.pop(user, None)
+        entry.update(user=user, domain=event.get('domain', ''), source=source, event=event['id'], first=when,
+                     last=when, expires=when + lifetime)
+        changes = [('changed', where, (old, user))]
+    else:
+        others[user] = max(others.get(user, 0), when)
+        changes = [('noted', where, user)]
+    if not before and shared(entry, arrival, lifetime):
+        changes.append(('shared', where, sorted({entry['user']} | set(others))))
+    return changes
+
+
+def expire(state, now, lifetime):
+    """Entries whose lifetime ended taken out, and others no longer within it forgotten."""
+    changes = []
+    for where in sorted(state['map']):
+        entry = state['map'][where]
+        if entry['expires'] <= now:
+            del state['map'][where]
+            changes.append(('left', where, (entry['user'], 'expired')))
+            continue
+        entry['others'] = {user: last for user, last in entry.get('others', {}).items() if last > now - lifetime}
+    return changes
+
+
+def check_macs(state, macs):
+    """The MAC check (settled point 7): an address whose MAC in the firewall's ARP or NDP table is not
+    the one it had leaves the map - another device has it; one with no MAC yet takes the one there.
+    An address the table does not hold - behind a router, or quiet - is left as it is."""
+    changes = []
+    for where in sorted(state['map']):
+        entry = state['map'][where]
+        mac = macs.get(where)
+        if not mac:
+            continue
+        if not entry.get('mac'):
+            entry['mac'] = mac
+        elif entry['mac'] != mac:
+            del state['map'][where]
+            changes.append(('left', where, (entry['user'], 'mac')))
+    return changes
+
+
+def flush(state):
+    """Every mapping forgotten: the owner's flush, or the plugin turned off."""
+    changes = [('left', where, (state['map'][where]['user'], 'flushed')) for where in sorted(state['map'])]
+    state['map'].clear()
+    return changes
+
+
+def tables(state, groups, conf, present):
+    """{alias: {address}} the map asks for: for each group row switched on whose alias is in config.xml,
+    the addresses of the users LDAP put in that group (groups: {user: {'in': [row names]}}); for each
+    user row, that user's addresses. An alias that is not there - not applied yet, or the owner's of
+    that name - is written nothing."""
+    want = {}
+    for row in conf.get('groups', []):
+        if not row['enabled'] or row['alias'] not in present:
+            continue
+        key = row['name'].lower()
+        want[row['alias']] = {where for where, entry in state['map'].items()
+                              if key in (groups.get(entry['user']) or {}).get('in', [])}
+    for row in conf.get('users', []):
+        if not row['enabled'] or row['alias'] not in present:
+            continue
+        key = row['name'].lower()
+        want[row['alias']] = {where for where, entry in state['map'].items() if entry['user'] == key}
+    return want
+
+
+def summary(changes, names=False):
+    """One line for the system log: counts, or with names when Settings says so (settled point 14)."""
+    counts = {}
+    for change, _, _ in changes:
+        counts[change] = counts.get(change, 0) + 1
+    if not names:
+        words = {'joined': 'mapped', 'changed': 'mapped to another user', 'left': 'left', 'shared': 'now shared'}
+        parts = ['%d %s' % (counts[k], words[k]) for k in ('joined', 'changed', 'shared', 'left') if counts.get(k)]
+        return ('addresses: ' + ', '.join(parts)) if parts else ''
+    parts = []
+    for change, where, detail in changes:
+        if change == 'joined':
+            parts.append('%s mapped to %s' % (where, detail))
+        elif change == 'changed':
+            parts.append('%s mapped to %s, was %s' % (where, detail[1], detail[0]))
+        elif change == 'shared':
+            parts.append('%s shared by %s' % (where, ', '.join(detail)))
+        elif change == 'left':
+            parts.append('%s of %s left (%s)' % (where, detail[0], detail[1]))
+    return '; '.join(parts)
+
+
+def record(changes, days, now, folder=HISTORY):
+    """The history Settings keeps (0 days: none): each mapping made, changed or ended, a file a day."""
+    if days <= 0:
+        return 0
+    lines = []
+    for change, where, detail in changes:
+        if change == 'joined':
+            lines.append({'at': int(now), 'change': change, 'address': where, 'user': detail})
+        elif change == 'changed':
+            lines.append({'at': int(now), 'change': change, 'address': where, 'user': detail[1], 'before': detail[0]})
+        elif change == 'left':
+            lines.append({'at': int(now), 'change': change, 'address': where, 'user': detail[0], 'why': detail[1]})
+    if not lines:
+        return 0
+    os.makedirs(folder, mode=0o750, exist_ok=True)
+    path = os.path.join(folder, time.strftime('%Y-%m-%d', time.localtime(now)) + '.jsonl')
+    with open(path, 'a', encoding='utf-8') as handle:
+        os.fchmod(handle.fileno(), 0o640)
+        for line in lines:
+            handle.write(json.dumps(line, sort_keys=True) + '\n')
+    return len(lines)
+
+
+def prune(days, now, folder=HISTORY):
+    """The history's files older than days taken away; all of them when it is 0."""
+    removed = 0
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    oldest = time.strftime('%Y-%m-%d', time.localtime(now - days * 86400))
+    for name in names:
+        if not name.endswith('.jsonl'):
+            continue
+        if days <= 0 or name[:10] < oldest:
+            with contextlib.suppress(OSError):
+                os.unlink(os.path.join(folder, name))
+                removed += 1
+    return removed
