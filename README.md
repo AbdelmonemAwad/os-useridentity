@@ -48,8 +48,9 @@ by default:
   destination can name it. A table is made from the map each time, never edited by an event alone;
 - **the cut** - where os-xgs-npu is installed, XGS: Settings' "Cut open connections when listed" holds
   these tables, beside the owner's own entries: an address that joins one has the connections it
-  already had cut within a minute, in hardware first. Leaving a table cuts nothing. Without os-xgs-npu
-  nothing is cut, and the page says so;
+  already had cut within a minute, in hardware first. Each table is put there once, when it is made (or
+  when os-xgs-npu comes after it), and the plugin keeps a record of it: one the owner takes out stays
+  out. Leaving a table cuts nothing. Without os-xgs-npu nothing is cut, and the page says so;
 - **the cards and tabs** - users present, groups and the directory's state, domain controllers heard,
   the last event; then Users (the live map, an address shared marked, Forget every mapping, and the
   user rows), Groups (the group rows, the addresses each table holds, and a Test that asks the

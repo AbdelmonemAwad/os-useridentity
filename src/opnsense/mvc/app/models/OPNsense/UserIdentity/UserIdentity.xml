@@ -115,6 +115,15 @@
                 <MaximumValue>10080</MaximumValue>
                 <ValidationMessage>Minutes, from 0 to 10080.</ValidationMessage>
             </alert_silent>
+            <!--
+                Not a setting: the uuids of the plugin's aliases it put in os-xgs-npu's cut list itself,
+                written by aliases.php alone and on no form, so one the owner takes out of XGS: Settings is
+                never put back (lists_cut.py would take every address the table holds as new, and cut it).
+            -->
+            <cut_added type="TextField">
+                <Required>N</Required>
+                <Mask>/^[0-9a-fA-F,-]{0,8000}$/</Mask>
+            </cut_added>
         </general>
         <!-- A table for each group row (settled point 5) - its alias proposed from the group's name,
              editable - and for each user named (settled point 6). -->

@@ -163,26 +163,43 @@ class Aliases
     }
 
     /**
-     * XGS: Settings' cut list as it should be: the owner's entries as they are, in their order, then
-     * the uuids of the plugin's aliases wanted and switched on; none of the plugin's others.
+     * XGS: Settings' cut list as it should be, and the plugin's record of what it put there:
+     * [list, record]. The owner's entries stay as they are, in their order. An alias of the plugin's
+     * wanted and switched on goes in once - when the record does not hold it yet: made now, or made
+     * before os-xgs-npu was installed - and is recorded; one the record holds is left as the owner left
+     * it, so a table the owner took out stays out (lists_cut.py keeps what a list held when it stopped
+     * watching it, and would take all it holds now as new and cut it). An alias of the plugin's no
+     * longer wanted, or switched off, leaves the list and the record both, so wanted again it goes back.
      */
-    public static function cutLists(array $current, array $ours, array $wanted)
+    public static function cutLists(array $current, array $ours, array $wanted, array $added = [])
     {
         $mine = [];
         foreach ($ours as $alias) {
             $mine[$alias['uuid']] = true;
         }
+        $live = [];
+        foreach ($wanted as $name => $want) {
+            if (isset($ours[$name]) && $ours[$name]['enabled']) {
+                $live[$ours[$name]['uuid']] = true;
+            }
+        }
         $out = [];
         foreach ($current as $uuid) {
-            if ($uuid !== '' && !isset($mine[$uuid]) && !in_array($uuid, $out, true)) {
+            if ($uuid !== '' && (!isset($mine[$uuid]) || isset($live[$uuid])) && !in_array($uuid, $out, true)) {
                 $out[] = $uuid;
             }
         }
-        foreach ($wanted as $name => $want) {
-            if (isset($ours[$name]) && $ours[$name]['enabled'] && !in_array($ours[$name]['uuid'], $out, true)) {
-                $out[] = $ours[$name]['uuid'];
+        $record = array_values(array_unique(array_filter($added, function ($uuid) use ($live) {
+            return isset($live[$uuid]);
+        })));
+        foreach (array_keys($live) as $uuid) {
+            if (!in_array($uuid, $record, true)) {
+                if (!in_array($uuid, $out, true)) {
+                    $out[] = $uuid;
+                }
+                $record[] = $uuid;
             }
         }
-        return $out;
+        return [$out, $record];
     }
 }

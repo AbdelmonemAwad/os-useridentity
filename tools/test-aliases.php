@@ -355,10 +355,13 @@ VALIDATION;
     $ours = ['uid_grp_G_Staff' => ['uuid' => 'p1', 'enabled' => true], 'uid_usr_user1' => ['uuid' => 'p2', 'enabled' => true],
         'uid_grp_Old' => ['uuid' => 'p3', 'enabled' => true], 'uid_grp_Off' => ['uuid' => 'p4', 'enabled' => false]];
     check(Aliases::cutLists(['o1', 'p3', 'o2', 'o1', ''], $ours, ['uid_grp_G_Staff' => [], 'uid_usr_user1' => [],
-        'uid_grp_Off' => []]) === ['o1', 'o2', 'p1', 'p2'],
-        'the cut list: the owner\'s entries kept in their order, once; the plugin\'s wanted added; one no longer wanted out; one switched off not in');
-    check(Aliases::cutLists(['p1', 'o1', 'p2'], $ours, []) === ['o1'], 'the plugin off: only the owner\'s left');
-    check(Aliases::cutLists(['o1', 'p1'], $ours, ['uid_grp_G_Staff' => []]) === ['o1', 'p1'], 'nothing to change: the same list');
+        'uid_grp_Off' => []]) === [['o1', 'o2', 'p1', 'p2'], ['p1', 'p2']],
+        'the cut list: the owner\'s entries kept in their order, once; the plugin\'s wanted added and recorded; one no ' .
+        'longer wanted out; one switched off not in');
+    check(Aliases::cutLists(['p1', 'o1', 'p2'], $ours, [], ['p1', 'p2']) === [['o1'], []],
+        'the plugin off: only the owner\'s left, nothing recorded');
+    check(Aliases::cutLists(['o1', 'p1'], $ours, ['uid_grp_G_Staff' => []], ['p1']) === [['o1', 'p1'], ['p1']],
+        'nothing to change: the same list, the same record');
 
     /* aliases.php, run as configd runs it */
     $state = $tmp . '/state.json';
@@ -388,9 +391,12 @@ namespace OPNsense\UserIdentity {
         public function iterateItems() { foreach ($this->rows as $u => $r) { yield $u => (object)$r; } } }
     class UserIdentity { public $general; public $groups; public $users;
         public function __construct() { $s = json_decode((string)@file_get_contents(getenv("STATE")), true);
-            $this->general = (object)["enabled" => $s["enabled"] ?? "0"];
+            $this->general = (object)["enabled" => $s["enabled"] ?? "0", "cut_added" => $s["cut_added"] ?? ""];
             $this->groups = (object)["group" => new Rows($s["groups"] ?? [])];
-            $this->users = (object)["user" => new Rows($s["users"] ?? [])]; } } }
+            $this->users = (object)["user" => new Rows($s["users"] ?? [])]; }
+        public function performValidation() { return []; }
+        public function serializeToConfig() { $s = json_decode((string)@file_get_contents(getenv("STATE")), true);
+            $s["cut_added"] = (string)$this->general->cut_added; file_put_contents(getenv("STATE"), json_encode($s)); } } }
 namespace OPNsense\XGS {
     if (getenv("XGS") === "1") {
         class Node { public $value; public $changed = false; public function __construct($v) { $this->value = $v; }
@@ -466,8 +472,16 @@ namespace { require "' . $root . '/src/opnsense/mvc/app/library/OPNsense/UserIde
         ($saved['saved'] ?? 0) === 1, 'aliases.php, on: an alias for each row switched on, the owner\'s left, saved once');
     check(($saved['cut_lists'] ?? '') === 'owner-1,owner-2,n101,n102' && ($out['cut']['lists'] ?? 0) === 2,
         'aliases.php: the cut list holds the two, after the owner\'s entries kept as they were');
+    check(($saved['cut_added'] ?? '') === 'n101,n102', 'aliases.php: the plugin\'s record says it put the two there');
     [$out, $saved] = run_script($tmp, $state, ['XGS' => '1']);
     check(($out['changes'] ?? null) === [] && ($saved['saved'] ?? 0) === 1, 'aliases.php again, nothing changed: nothing saved');
+    /* the owner takes G-Staff's table out of XGS: Settings' cut list (the review's fourth finding) */
+    $saved['cut_lists'] = 'owner-1,owner-2,n102';
+    file_put_contents($state, json_encode($saved));
+    [$out, $saved] = run_script($tmp, $state, ['XGS' => '1']);
+    check(($saved['cut_lists'] ?? '') === 'owner-1,owner-2,n102' && ($out['changes'] ?? null) === [] &&
+        ($saved['cut_added'] ?? '') === 'n101,n102',
+        'aliases.php after the owner took a table out of the cut list: not put back - lists_cut.py would take all it holds as new');
     $saved['enabled'] = '0';
     file_put_contents($state, json_encode($saved));
     [$out, $saved] = run_script($tmp, $state, ['XGS' => '1']);
@@ -475,6 +489,7 @@ namespace { require "' . $root . '/src/opnsense/mvc/app/library/OPNsense/UserIde
         ($saved['cut_lists'] ?? '') === 'owner-1,owner-2' && ($saved['saved'] ?? 0) === 2,
         'aliases.php, off, config.xml holding the plugin\'s rows: the plugin\'s aliases removed - its own rows and cut ' .
         'list entries are no one else\'s - and out of the cut list, saved once');
+    check(($saved['cut_added'] ?? 'x') === '', 'aliases.php, off: the record forgets them with them');
     $saved['enabled'] = '1';
     file_put_contents($state, json_encode($saved));
     [$out, $saved] = run_script($tmp, $state, ['XGS' => '1']);
@@ -506,11 +521,27 @@ namespace { require "' . $root . '/src/opnsense/mvc/app/library/OPNsense/UserIde
     file_put_contents($state, json_encode($saved));
     [$out, $after] = run_script($tmp, $state, []);
     check(($out['status'] ?? '') === 'ok' && ($out['cut']['xgs'] ?? true) === false && ($after['cut_lists'] ?? '') ===
-        'owner-1,owner-2' && count($after['aliases']) === 3,
-        'aliases.php without os-xgs-npu: the aliases made, no cut list touched');
+        'owner-1,owner-2' && count($after['aliases']) === 3 && ($after['cut_added'] ?? 'x') === '',
+        'aliases.php without os-xgs-npu: the aliases made, no cut list or record touched');
+    $made = array_keys(array_filter($after['aliases'], function ($a) {
+        return strpos($a['name'], 'uid_') === 0;
+    }));
+    [$out, $after] = run_script($tmp, $state, ['XGS' => '1']);
+    check(($after['cut_lists'] ?? '') === 'owner-1,owner-2,' . implode(',', $made) &&
+        ($after['cut_added'] ?? '') === implode(',', $made),
+        'os-xgs-npu installed after the aliases were made: each put in the cut list once, and recorded');
     [$out, $after] = run_script($tmp, $state, ['XGS' => '1'], '--remove');
     check(($out['status'] ?? '') === 'ok' && array_column($after['aliases'], 'name') === ['blocked'] &&
-        ($after['cut_lists'] ?? '') === 'owner-1,owner-2', 'aliases.php --remove: every alias of the plugin\'s out, and out of the cut list');
+        ($after['cut_lists'] ?? '') === 'owner-1,owner-2' && ($after['cut_added'] ?? 'x') === '',
+        'aliases.php --remove: every alias of the plugin\'s out, out of the cut list and of the record');
+    $ours = ['a' => ['uuid' => 'p1', 'enabled' => true], 'b' => ['uuid' => 'p2', 'enabled' => true],
+        'c' => ['uuid' => 'p3', 'enabled' => false]];
+    check(Aliases::cutLists(['o1', 'p2'], $ours, ['a' => [], 'b' => [], 'c' => []], ['p2']) === [['o1', 'p2', 'p1'], ['p2', 'p1']],
+        'the cut list and the record: one wanted and never put there added and recorded, one already there kept');
+    check(Aliases::cutLists(['o1'], $ours, ['a' => [], 'b' => []], ['p1', 'p2']) === [['o1'], ['p1', 'p2']],
+        'the cut list and the record: two the owner took out stay out, and stay recorded');
+    check(Aliases::cutLists(['o1', 'p1', 'p3'], $ours, ['b' => []], ['p1', 'p2', 'p3']) === [['o1'], ['p2']],
+        'the cut list and the record: no longer wanted, or switched off - out of both, so wanted again goes back in');
 
     foreach (glob($tmp . '/script/*') as $f) {
         unlink($f);

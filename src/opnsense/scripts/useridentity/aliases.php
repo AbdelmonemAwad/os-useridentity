@@ -9,7 +9,9 @@
  * External alias for each group row and each user row switched on, while User Identity is on; none of
  * this plugin's while it is off. Where os-xgs-npu is installed, its cut list - XGS: Settings, "Cut open
  * connections when listed" - then holds the plugin's aliases wanted, beside the owner's own entries,
- * which stay as they are (settled point 9); without it nothing is cut, and the page says so.
+ * which stay as they are (settled point 9): each put there once and recorded in the plugin's settings
+ * (general.cut_added), so one the owner takes out stays out. Without os-xgs-npu nothing is cut, and the
+ * page says so.
  *
  * Nothing is saved unless the models take every change; the configuration is saved once.
  *
@@ -32,8 +34,8 @@ function answer($result)
 
 $remove = in_array('--remove', $argv, true);
 $wanted = [];
+$settings = new UserIdentity();
 if (!$remove) {
-    $settings = new UserIdentity();
     if ((string)$settings->general->enabled === '1') {
         foreach (['groups' => 'group', 'users' => 'user'] as $list => $kind) {
             foreach ($settings->$list->$kind->iterateItems() as $row) {
@@ -73,7 +75,21 @@ if (class_exists('OPNsense\XGS\XGS')) {
     if ($node !== null) {
         $cut['xgs'] = true;
         $current = array_values(array_filter(explode(',', (string)$node)));
-        $after = Aliases::cutLists($current, Aliases::ours($model) + $before, $wanted);
+        /* what the plugin put in the cut list itself: one the owner took out is not put back */
+        $added = array_values(array_filter(explode(',', (string)$settings->general->cut_added)));
+        [$after, $record] = Aliases::cutLists($current, Aliases::ours($model) + $before, $wanted, $added);
+        if ($record !== $added) {
+            $settings->general->cut_added = implode(',', $record);
+            $refused = [];
+            foreach ($settings->performValidation() as $message) {
+                $refused[] = $message->getField() . ': ' . $message->getMessage();
+            }
+            if (!empty($refused)) {
+                answer(['status' => 'failed', 'changes' => [], 'errors' => $refused]);
+            }
+            $settings->serializeToConfig();
+            $cut['recorded'] = true;
+        }
         if ($after !== $current) {
             $node->setValue(implode(',', $after));
             $refused = [];
@@ -91,7 +107,7 @@ if (class_exists('OPNsense\XGS\XGS')) {
     }
 }
 
-if (!empty($changes)) {
+if (!empty($changes) || !empty($cut['recorded'])) {
     Config::getInstance()->save();
 }
 answer(['status' => 'ok', 'changes' => $changes, 'notes' => $done['notes'], 'aliases' => count($wanted), 'cut' => $cut]);
