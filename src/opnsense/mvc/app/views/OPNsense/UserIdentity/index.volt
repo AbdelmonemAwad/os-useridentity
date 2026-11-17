@@ -174,11 +174,16 @@
         }
 
         /* NXLog CE's configuration for a domain controller (settled point 2), as phase 0's lab ran it:
-           the two events that map, as JSON over TCP, to the first chosen interface's address. */
+           the two events that map, as JSON over TCP, to the first chosen interface's address - with each
+           event's time in UTC and its zone (DateFormat), so a domain controller in another time zone is
+           read right, and without the event's long text (delete($Message)), which nothing here reads and
+           which made half of each line. */
         function nxlog(data) {
             const first = (data.listen || []).filter(function (l) { return l.address; })[0];
             const host = first ? first.address : "{{ lang._('the address of the firewall on the chosen interface') }}";
             $('#ui-nxlog').text([
+                'DateFormat YYYY-MM-DDThh:mm:ss.sUTC',
+                '',
                 '<Extension json>',
                 '    Module  xm_json',
                 '</Extension>',
@@ -187,7 +192,7 @@
                 '    <QueryXML>',
                 '        <QueryList><Query Id="0"><Select Path="Security">*[System[(EventID=4768 or EventID=4624)]]</Select></Query></QueryList>',
                 '    </QueryXML>',
-                '    Exec    to_json();',
+                '    Exec    delete($Message); to_json();',
                 '</Input>',
                 '<Output firewall>',
                 '    Module  om_tcp',
@@ -556,6 +561,9 @@
             {{ lang._('NXLog Community Edition reads the Security log and sends the two events as JSON over TCP. Its configuration, as phase 0\'s lab ran it, to put in nxlog.conf on each domain controller named in Settings, then restart its service:') }}
         </div>
         <pre id="ui-nxlog"></pre>
+        <div class="text-muted ui-note">
+            {{ lang._('DateFormat makes NXLog CE write the time of each event in UTC with its zone, so the firewall reads it right whatever the time zone of the domain controller; without it the time is read in the zone of the firewall. delete($Message) leaves out the long text of each event, which nothing here reads, and keeps each line well under what one datagram to the collector can carry.') }}
+        </div>
         <div class="text-muted ui-note">
             {{ lang._('The domain controllers keep their audit of Kerberos Authentication Service and of Logon for success, as Windows Server does by default. TLS from the domain controllers is not taken yet: the redirect, from their addresses alone, is what lets a line in.') }}
         </div>

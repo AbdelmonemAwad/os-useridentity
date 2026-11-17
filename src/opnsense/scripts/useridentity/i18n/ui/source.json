@@ -21,6 +21,7 @@
  "Ask the directory about a user",
  "BSD-2-Clause licence",
  "Commands",
+ "DateFormat makes NXLog CE write the time of each event in UTC with its zone, so the firewall reads it right whatever the time zone of the domain controller; without it the time is read in the zone of the firewall. delete($Message) leaves out the long text of each event, which nothing here reads, and keeps each line well under what one datagram to the collector can carry.",
  "Days, from 0 to 365.",
  "Description",
  "Domain controller",

@@ -234,5 +234,25 @@ VOLT = open(os.path.join(ROOT, 'src', 'opnsense', 'mvc', 'app', 'views', 'OPNsen
             encoding='utf-8').read()
 check('the page names the reason no pre-authentication', "'no pre-authentication':" in VOLT, True)
 
+# the NXLog CE configuration the page gives: each event's time sent in UTC with its zone, whatever the
+# domain controller's own, and the event's long text left out (the review's third and twelfth findings)
+SNIPPET = VOLT.split('function nxlog(data)', 1)[1].split('].join', 1)[0]
+check('the page\'s NXLog configuration: DateFormat sends each time in UTC with its zone',
+      "'DateFormat YYYY-MM-DDThh:mm:ss.sUTC'" in SNIPPET, True)
+check('the page\'s NXLog configuration: the event\'s Message left out before to_json()',
+      "'    Exec    delete($Message); to_json();'" in SNIPPET, True)
+check('the page says what the DateFormat line does', 'DateFormat' in VOLT.split('<pre id="ui-nxlog"></pre>', 1)[1], True)
+os.environ['TZ'] = 'Asia/Dubai'
+time.tzset()
+sent = edited(TICKET, Message=None, EventTime='2026-11-17T18:41:33.123456Z')
+found = events.parse(sent)
+check('a ticket as that configuration sends it, read in a firewall four hours ahead of UTC: its own time',
+      (found[0], found[1]['time'] if found[0] == 'event' else None), ('event', 1794940893.123456))
+os.environ['TZ'] = 'UTC'
+time.tzset()
+longest = max(len(edited(line[2], Message=None)) for line in LAB.values())
+check('the lab\'s longest line without its Message: well under the 8,192 bytes a datagram takes (%d)' % longest,
+      longest < 4096, True)
+
 print('%d of %d checks failed' % (failures, checks) if failures else '%d checks passed' % checks)
 sys.exit(1 if failures else 0)

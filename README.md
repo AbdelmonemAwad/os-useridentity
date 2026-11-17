@@ -36,7 +36,9 @@ by default:
 - **the map** - each address on the network with the user its domain controller last saw logging on from
   it, from two events of the Windows Security log: 4768, a ticket-granting ticket issued, and 4624, a
   logon to the domain controller with the client's address. NXLog Community Edition on each domain
-  controller sends them as JSON over TCP; the page shows its configuration to copy;
+  controller sends them as JSON over TCP; the page shows its configuration to copy - each event's time in
+  UTC with its zone (`DateFormat`), and the event's long text left out (`delete($Message)`), which
+  nothing here reads;
 - **the groups** - the directory chosen in System: Access: Servers is asked which of the chosen groups
   each user is in: directly, or, with Nested groups on, through a group inside it, by Active
   Directory's in-chain rule;
@@ -87,8 +89,9 @@ NXLog's and the domain controller's behaviour, not this plugin's:
   Stale after when it arrives - NXLog CE sends again, when it starts, what it held while stopped, ten
   minutes old in the lab - the firewall's own addresses (OPNsense's own LDAP connector binds as a user
   from one of them), a domain controller's, loopback, link-local, multicast and broadcast addresses,
-  Never map's addresses and Ignore users' users. The events' times are read in the firewall's own time
-  zone;
+  Never map's addresses and Ignore users' users. An event's time with a zone - the page's NXLog
+  configuration sends one - is read as it says; one with none, NXLog CE's default, in the firewall's own
+  time zone;
 - **the latest wins** - an address another user logs on from takes that user, and is marked shared
   while the one before is still within the lifetime: in the lab a runas on a client moved its address
   to the runas user while another sat at its screen. Never map is for terminal servers and NAT inside
