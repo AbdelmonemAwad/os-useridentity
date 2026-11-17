@@ -9,7 +9,9 @@ says the glue goes. Each gets one redirect for each named domain controller on e
 through a name it has; a bad domain controller entry is left out and the others registered; an object
 that refuses a rule leaves the hook returning, not stopping the reload (os-xgs-npu issue 969); nothing
 is registered while the plugin is off, with no domain controller, or with syslog-ng's source not there;
-and the hook calls by name only methods every one of them has.
+no redirect either for a port the firewall itself serves - SSH, DNS, the web GUI, and where System:
+Settings: Administration moves the web GUI or SSH - nor without the plugin's library that says which
+those are; and the hook calls by name only methods every one of them has.
 
 A refused rule is logged with syslog() as the hook does at run time, so a run of this leaves a
 "useridentity: ... left out" line in the system log of the machine it runs on.
@@ -25,6 +27,8 @@ import tempfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, 'src', 'etc', 'inc', 'plugins.inc.d', 'useridentity.inc')
+# The plugin's library that says which ports the firewall serves: OPNsense's autoloader finds it there
+PORTS = os.path.join(ROOT, 'src', 'opnsense', 'mvc', 'app', 'library', 'OPNsense', 'UserIdentity', 'Ports.php')
 
 # What OPNsense\Firewall\Plugin offers for registering rules, by release - os-xgs-npu's reading of
 # opnsense/core's Plugin.php at the tags 26.7, 26.7.3 and 26.7.8 (2026-11-02); 27.1 is 26.7.8 without the
@@ -44,6 +48,9 @@ foreach ($c['methods'] as $m) {
         . "\$this->calls[] = ['$m', \$a]; }\n";
 }
 eval("class FakePlugin { public \$calls = [];\n$body}");
+if ($c['ports'] !== '' && is_file($c['ports'])) {
+    require $c['ports'];
+}
 include $argv[1];
 $fw = new FakePlugin();
 $out = useridentity_firewall($fw);
@@ -62,15 +69,18 @@ def check(name, got, want):
     print('%s %s%s' % ('ok  ' if ok else 'FAIL', name, '' if ok else ' - got %r, want %r' % (got, want)))
 
 
-def config(general=None, interfaces=None):
+def config(general=None, interfaces=None, system=None):
     base = {'enabled': '1', 'domain_controllers': '192.0.2.10,192.0.2.11', 'interfaces': 'lan,opt1', 'port': '514'}
     base.update(general or {})
-    return {'interfaces': interfaces if interfaces is not None else
-            {'lan': {'if': 'igb1', 'enable': '1'}, 'opt1': {'if': 'igb2', 'enable': '1'}, 'wan': {'if': 'igb0', 'enable': '1'}},
-            'OPNsense': {'UserIdentity': {'general': base}}}
+    out = {'interfaces': interfaces if interfaces is not None else
+           {'lan': {'if': 'igb1', 'enable': '1'}, 'opt1': {'if': 'igb2', 'enable': '1'}, 'wan': {'if': 'igb0', 'enable': '1'}},
+           'OPNsense': {'UserIdentity': {'general': base}}}
+    if system is not None:
+        out['system'] = system
+    return out
 
 
-def hook(methods, conf=None, source=None, refuse=None):
+def hook(methods, conf=None, source=None, refuse=None, ports=None):
     path = os.path.join(TMP, 'syslog.json')
     if source is None:
         source = {'written': True, 'port': 5141}
@@ -80,7 +90,8 @@ def hook(methods, conf=None, source=None, refuse=None):
     else:
         with open(path, 'w', encoding='utf-8') as handle:
             json.dump(source, handle)
-    case = json.dumps({'methods': methods, 'config': conf or config(), 'refuse': refuse, 'source': path})
+    case = json.dumps({'methods': methods, 'config': conf or config(), 'refuse': refuse, 'source': path,
+                       'ports': PORTS if ports is None else ports})
     out = subprocess.run(['php', '-r', HARNESS, '--', HOOK, case], capture_output=True, text=True)
     if out.returncode != 0 or not out.stdout.startswith('{'):
         return 'php failed: ' + (out.stderr or out.stdout).strip()[:300]
@@ -134,6 +145,19 @@ try:
     check('syslog-ng\'s source never applied: no rule', names(hook(CORE_26_7_3, source='absent')), [])
     check('a source on a port it may not have: no rule', names(hook(CORE_26_7_3, source={'written': True, 'port': 80})), [])
     check('a port that is none: no rule', names(hook(CORE_26_7_3, config({'port': 'syslog'}))), [])
+    for port, what in (('22', 'SSH'), ('53', 'DNS'), ('80', 'the web GUI over HTTP'), ('443', 'the web GUI')):
+        check('port %s, %s: no rule - the domain controllers would lose it' % (port, what),
+              names(hook(CORE_26_7_3, config({'port': port}))), [])
+    check('the web GUI moved to the port Settings gives: no rule',
+          names(hook(CORE_26_7_3, config({'port': '8443'}, system={'webgui': {'port': '8443'}}))), [])
+    check('SSH moved to it: no rule',
+          names(hook(CORE_26_7_3, config({'port': '2222'}, system={'ssh': {'port': '2222'}}))), [])
+    check('the web GUI moved to another port: the port taken',
+          names(hook(CORE_26_7_3, config({'port': '8443'}, system={'webgui': {'port': '10443'}, 'ssh': ''}))),
+          ['registerDestinationNatRule'] * 4)
+    got = hook(CORE_26_7_3, ports='')
+    check('the plugin\'s library not there: no rule, the reload not stopped',
+          (names(got), got['same']) if isinstance(got, dict) else got, ([], True))
     got = hook(CORE_26_7_3, config({'interfaces': 'lan,opt2,opt3'},
                                    {'lan': {'if': 'igb1', 'enable': '1'}, 'opt3': {'if': 'igb3'}}))
     check('an interface not there, one not enabled: none on them, the rest registered',

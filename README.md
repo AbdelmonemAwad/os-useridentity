@@ -72,16 +72,19 @@ NXLog's and the domain controller's behaviour, not this plugin's:
 
 - **received by OPNsense's own syslog-ng** - a source of the plugin's on 127.0.0.1, TCP, port 5141, in
   `/usr/local/etc/syslog-ng.conf.d/useridentity.conf`, and a pf redirect, on the chosen interfaces, from
-  each domain controller named in Settings and no other address, of the port the domain controllers
-  send to (514 by default) to that source - os-xgs-npu's way for the coprocessor's log. The redirect is
-  the gate: phase 0's lab saw a line from a machine that is no domain controller arrive as easily, so
-  the plugin reads only what the named addresses send, and syslog-ng's source is reached by nothing
-  else from the network. syslog-ng cannot listen on an interface's address, and one source that cannot
-  bind stops it whole, with every log of OPNsense's: so the source is written only on a port no other
-  program holds, and only when syslog-ng takes its whole configuration with it - when it does not, the
-  file before is put back and syslog-ng is not restarted, since the refusal may be another file's; else
-  the page says why, and no redirect is registered. The lines go to no log file: syslog-ng hands each to the plugin's
-  collector, over a socket, with the address it came from;
+  each domain controller named in Settings and no other address, of the port the domain controllers send
+  to (514 by default) to that source - os-xgs-npu's way for the coprocessor's log. Never a port the
+  firewall itself serves - SSH, DNS, the web GUI on 80, 443 or its own port - which the domain
+  controllers would then no longer reach: Settings refuses one, and no redirect is registered on one the
+  web GUI or SSH is moved to afterwards. The redirect is the gate: phase 0's lab saw a line from a
+  machine that is no domain controller arrive as easily, so the plugin reads only what the named
+  addresses send, and syslog-ng's source is reached by nothing else from the network. syslog-ng cannot
+  listen on an interface's address, and one source that cannot bind stops it whole, with every log of
+  OPNsense's: so the source is written only on a port no other program holds, and only when syslog-ng
+  takes its whole configuration with it - when it does not, the file before is put back and syslog-ng is
+  not restarted, since the refusal may be another file's. When it is not written the page says why, and
+  no redirect is registered. The lines go to no log file: syslog-ng hands each to the plugin's collector, over a
+  socket, with the address it came from;
 - **what maps** - a ticket issued (4768, Status 0x0), its address written `::ffff:a.b.c.d` for IPv4,
   comes 1.5 to 2.4 seconds after a logon, and again at an unlock; network logons to the domain
   controller (4624) renew an idle session - in the lab's idle hour, 37 lines about the user in six
@@ -166,14 +169,20 @@ On 2026-11-18, from this branch, away from an appliance - the checks, run under 
   filling a group's table, latest wins emptying a user's, no directory asked when none is chosen, its
   answers forgotten once their users leave the map; the minute's run, Forget all, the plugin off and a
   switched-off alias's table kept empty; the alerts; what `status.py` gives the page;
-- **the firewall hook** - `tools/test-firewall-hook.py`, 24 checks, os-xgs-npu's harness: the redirects
+- **the firewall hook** - `tools/test-firewall-hook.py`, 32 checks, os-xgs-npu's harness: the redirects
   through each OPNsense's own method name (26.7, 26.7.3 to 26.7.8, 27.1), a bad domain controller entry
-  left out, a refusing object not stopping the reload, nothing while off or with the source not there;
+  left out, a refusing object not stopping the reload, nothing while off or with the source not there,
+  nothing on a port the firewall itself serves - SSH, DNS, the web GUI, and where the web GUI or SSH is
+  moved - nor without the library that says which those are;
 - **the aliases** - `tools/test-aliases.php`, 34 checks, with stand-ins for OPNsense's Alias model whose
   validation is OPNsense 26.7's own for the fields written, pf's reserved words included: the names
   proposed - Latin, spaced, in another script, too long, taken - each taken by that validation; aliases
   made, switched off where a rule names them; XGS: Settings' cut list keeping the owner's entries; and
   `aliases.php` run as configd runs it;
+- **the model** - `tools/test-model.php`, 13 checks, with stand-ins for OPNsense's BaseModel and Config:
+  the port the domain controllers send to refused when the firewall itself serves it - 22, 53, 80, 443,
+  and the ports the web GUI and SSH are moved to - only when it is changed or the whole model checked,
+  any other taken; two rows giving one alias name each told;
 - **the page's API** - `tools/test-mvc.php`, 34 checks: the status, the grids, Apply's order on and off,
   syslog-ng restarted only when its source changed, Forget all, the Test's names quoted or refused, the
   alias names proposed;

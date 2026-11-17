@@ -70,6 +70,19 @@ function useridentity_firewall($fw)
         syslog(LOG_ERR, 'useridentity: the port ' . $port . ' or the source\'s ' . $local . ' cannot be used: no redirect registered');
         return $fw;
     }
+    /*
+     * Not a port the firewall itself serves: the domain controllers would lose SSH, DNS or the web GUI
+     * on it. Settings refuses one, but the web GUI or SSH may be moved onto the port after it was saved.
+     * The library that says which is found by OPNsense's autoloader; were it not there, no redirect.
+     */
+    if (!class_exists('OPNsense\UserIdentity\Ports')) {
+        syslog(LOG_ERR, 'useridentity: its library is not there, so the ports the firewall serves are not known: no redirect registered');
+        return $fw;
+    }
+    if (in_array((int)$port, \OPNsense\UserIdentity\Ports::served($config['system'] ?? []), true)) {
+        syslog(LOG_ERR, 'useridentity: the port ' . $port . ' is one the firewall itself serves (SSH, DNS or the web GUI): no redirect registered');
+        return $fw;
+    }
     $dcs = [];
     foreach (preg_split('/[\s,;]+/', (string)($general['domain_controllers'] ?? ''), -1, PREG_SPLIT_NO_EMPTY) as $dc) {
         if (filter_var($dc, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4) !== false) {

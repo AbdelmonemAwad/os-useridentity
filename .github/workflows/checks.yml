@@ -87,6 +87,10 @@ jobs:
       - name: The page's API
         run: php tools/test-mvc.php
 
+      # The model's own checks: a port the firewall itself serves refused, one alias name per row.
+      - name: The model's own checks
+        run: php tools/test-model.php
+
       # install/install.sh copies src/ whole; install/uninstall.sh names what it removes.
       - name: Every file the installer lays down is removed by the uninstaller
         run: sh tools/check-uninstall.sh .

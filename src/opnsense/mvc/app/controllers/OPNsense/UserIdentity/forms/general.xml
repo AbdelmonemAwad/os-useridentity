@@ -27,7 +27,7 @@
         <id>useridentity.general.port</id>
         <label>Port</label>
         <type>text</type>
-        <help>The TCP port the domain controllers send to, on the firewall's addresses.</help>
+        <help>The TCP port the domain controllers send to, on the firewall's addresses. Not one the firewall itself serves - SSH, DNS, the web GUI on 80, 443 or its own port: the domain controllers would no longer reach that service.</help>
     </field>
     <field>
         <id>useridentity.general.ldap_server</id>
