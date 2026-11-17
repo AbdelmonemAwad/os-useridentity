@@ -266,9 +266,10 @@ namespace {
     Backend::$answers['useridentity source'] = json_encode(['written' => false, 'changed' => true, 'reason' => 'off']);
     Backend::$asked = [];
     (new ServiceController())->reconfigureAction();
-    check(Backend::$asked === ['useridentity apply', 'useridentity source', 'syslog restart', 'filter reload skip_alias',
-        'useridentity gone', 'useridentity stop', 'useridentity flush'],
-        'Apply, off: the source taken away and syslog-ng restarted, then the collector stopped and every mapping forgotten');
+    check(Backend::$asked === ['useridentity stop', 'useridentity flush', 'useridentity apply', 'useridentity source',
+        'syslog restart', 'filter reload skip_alias', 'useridentity gone'],
+        'Apply, off: the collector stopped and every mapping forgotten while the aliases are there, then the aliases, ' .
+        'the source taken away and syslog-ng restarted, the filter, the tables gone');
     UserIdentity::$enabled = '1';
     Backend::$answers = ['useridentity apply' => json_encode(['status' => 'failed', 'errors' => ['refused']])];
     Backend::$asked = [];
@@ -283,7 +284,7 @@ namespace {
     Backend::$answers = ['useridentity apply' => json_encode(['status' => 'failed', 'errors' => ['refused']])];
     Backend::$asked = [];
     $result = (new ServiceController())->reconfigureAction();
-    check(Backend::$asked === ['useridentity apply', 'useridentity stop', 'useridentity flush'] && $result['enabled'] === false,
+    check(Backend::$asked === ['useridentity stop', 'useridentity flush', 'useridentity apply'] && $result['enabled'] === false,
         'Apply, off, the aliases not written: the collector stopped and the map forgotten all the same');
 
     /* Forget all, Test */

@@ -65,6 +65,12 @@ def present(aliases):
     return {name for name, alias in aliases.items() if alias['ours'] and alias['enabled'] and alias['type'] == 'external'}
 
 
+def switched_off(aliases):
+    """{name} of the plugin's aliases switched off - kept because a rule or a setting names them: their
+    tables are kept empty, so no address mapped before stays in one."""
+    return {name for name, alias in aliases.items() if alias['ours'] and not alias['enabled']}
+
+
 def sync(pf, want, only=None):
     """Each table of want made to hold what want says, or only those named in only; [(table, added,
     removed)] of what changed. A table pf does not hold yet is filled when its addresses are added."""

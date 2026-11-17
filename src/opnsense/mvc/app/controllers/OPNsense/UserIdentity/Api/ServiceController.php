@@ -88,12 +88,13 @@ class ServiceController extends ApiControllerBase
     }
 
     /**
-     * The settings saved put into the firewall, in this order: the aliases (aliases.php, and the cut
-     * list where os-xgs-npu is installed); syslog-ng's source (syslogng.py), syslog-ng restarted only
-     * when it changed; the filter reloaded, so the redirect and the tables are pf's; the tables of
-     * aliases gone taken out of pf; then the collector started again - or, off, stopped and every
-     * mapping forgotten. When the aliases could not be written nothing more is done, except that a
-     * plugin turned off is stopped all the same: off means it maps nothing.
+     * The settings saved put into the firewall, in this order: off, the collector stopped and every
+     * mapping forgotten first, the tables emptied while their aliases are there; the aliases
+     * (aliases.php, and the cut list where os-xgs-npu is installed); syslog-ng's source (syslogng.py),
+     * syslog-ng restarted only when it changed; the filter reloaded, so the redirect and the tables are
+     * pf's; the tables of aliases gone taken out of pf; then, on, the collector started again. When the
+     * aliases could not be written nothing more is done - a plugin turned off is stopped all the same:
+     * off means it maps nothing.
      */
     public function reconfigureAction()
     {
@@ -102,13 +103,13 @@ class ServiceController extends ApiControllerBase
         }
         $backend = new Backend();
         $on = $this->enabled();
+        if (!$on) {
+            $backend->configdRun('useridentity stop');
+            $backend->configdRun('useridentity flush');
+        }
         $result = json_decode((string)$backend->configdRun('useridentity apply'), true);
         if (!is_array($result) || ($result['status'] ?? '') !== 'ok') {
             $result = is_array($result) ? $result : ['status' => 'failed', 'errors' => [gettext('No answer could be read.')]];
-            if (!$on) {
-                $backend->configdRun('useridentity stop');
-                $backend->configdRun('useridentity flush');
-            }
             $result['enabled'] = $on;
             return $result;
         }
@@ -121,9 +122,6 @@ class ServiceController extends ApiControllerBase
         $result['gone_tables'] = json_decode((string)$backend->configdRun('useridentity gone'), true);
         if ($on) {
             $backend->configdRun('useridentity restart');
-        } else {
-            $backend->configdRun('useridentity stop');
-            $backend->configdRun('useridentity flush');
         }
         $result['enabled'] = $on;
         return $result;

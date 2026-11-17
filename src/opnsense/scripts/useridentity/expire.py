@@ -10,7 +10,8 @@
   one it had leaves the map - another device has it - while Settings has it on;
 - with the plugin off, every mapping forgotten;
 - every table of the plugin's made again from the map, so one emptied by hand, or written while the
-  collector was down, is right within a minute;
+  collector was down, is right within a minute; and the table of an alias of the plugin's switched off -
+  kept because a rule or a setting names it - kept empty;
 - the history kept as long as Settings says, and the alerts no one collected 24 hours;
 - an alert for each domain controller silent for the minutes Settings gives, once until it speaks again.
 
@@ -85,8 +86,10 @@ def run(conf=None, now=None, pf=None, macs=None, flush=False):
             changes += engine.check_macs(state, macs() if macs else host.macs())
         engine.save(state)
         groups = engine.read_json(GROUPS, {}).get('users', {})
-        present = tables.present(settings.aliases())
-        want = engine.tables(state, groups, conf, present)
+        aliases = settings.aliases()
+        want = engine.tables(state, groups, conf, tables.present(aliases))
+        for name in tables.switched_off(aliases) - set(want):
+            want[name] = set()
         summary['tables'] = tables.sync(pf, want)
     summary['expired'] = sum(1 for c in changes if c[0] == 'left' and c[2][1] == 'expired')
     summary['mac'] = sum(1 for c in changes if c[0] == 'left' and c[2][1] == 'mac')

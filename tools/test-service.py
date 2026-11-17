@@ -316,6 +316,17 @@ try:
     check('minute: every table made again from the map - one emptied by hand filled, one held wrongly put right',
           (pf.held['uid_grp_G_Staff'], pf.held['uid_usr_user1']), ({'192.0.2.20'}, {'192.0.2.20'}))
     check('minute: what it did kept for the page', engine.read_json(expire.STATUS, {})['mapped'], 1)
+    kept = open(config, encoding='utf-8').read()
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(kept.replace('<aliases>', '<aliases><alias uuid="33333333-0000-4000-8000-000000000009"><enabled>0'
+                                               '</enabled><name>uid_grp_Old</name><type>external</type><description>User '
+                                               'Identity: group Old</description></alias>', 1))
+    pf.held['uid_grp_Old'] = {'192.0.2.77'}
+    expire.run(settings.read(), now=now, pf=collector.tables.Pf(run=pf), macs=lambda: {})
+    check('minute: the table of an alias of the plugin\'s switched off - a rule still names it - kept empty',
+          pf.held['uid_grp_Old'], set())
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(kept)
     out = expire.run(conf, now=now + 1, pf=collector.tables.Pf(run=pf), flush=True)
     check('Forget all: every mapping gone, the tables emptied', (out['flushed'], engine.load()['map'],
                                                                  pf.held['uid_grp_G_Staff'], pf.held['uid_usr_user1']),
