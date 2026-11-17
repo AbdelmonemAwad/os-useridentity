@@ -47,9 +47,10 @@ HISTORY = STATE + '/history'
 
 
 @contextlib.contextmanager
-def locked(path=LOCK, wait=30.0):
+def locked(path=None, wait=30.0):
     """The map's lock, held for the with block; waits up to wait seconds, then goes on without it
     rather than stop - the map is written whole each time, so the worst is one change lost."""
+    path = path or LOCK
     os.makedirs(os.path.dirname(path), mode=0o750, exist_ok=True)
     handle = open(path, 'a')
     until = time.monotonic() + wait
@@ -96,8 +97,8 @@ def read_json(path, default):
         return default
 
 
-def load(path=MAP):
-    state = read_json(path, {})
+def load(path=None):
+    state = read_json(path or MAP, {})
     entries = state.get('map') if isinstance(state.get('map'), dict) else {}
     clean = {}
     for address, entry in entries.items():
@@ -108,8 +109,8 @@ def load(path=MAP):
     return {'version': 1, 'map': clean}
 
 
-def save(state, path=MAP):
-    write_json(path, {'version': 1, 'map': state['map'], 'saved': int(time.time())})
+def save(state, path=None):
+    write_json(path or MAP, {'version': 1, 'map': state['map'], 'saved': int(time.time())})
 
 
 def shared(entry, now, lifetime):
@@ -234,7 +235,7 @@ def summary(changes, names=False):
     return '; '.join(parts)
 
 
-def record(changes, days, now, folder=HISTORY):
+def record(changes, days, now, folder=None):
     """The history Settings keeps (0 days: none): each mapping made, changed or ended, a file a day."""
     if days <= 0:
         return 0
@@ -248,6 +249,7 @@ def record(changes, days, now, folder=HISTORY):
             lines.append({'at': int(now), 'change': change, 'address': where, 'user': detail[0], 'why': detail[1]})
     if not lines:
         return 0
+    folder = folder or HISTORY
     os.makedirs(folder, mode=0o750, exist_ok=True)
     path = os.path.join(folder, time.strftime('%Y-%m-%d', time.localtime(now)) + '.jsonl')
     with open(path, 'a', encoding='utf-8') as handle:
@@ -257,9 +259,10 @@ def record(changes, days, now, folder=HISTORY):
     return len(lines)
 
 
-def prune(days, now, folder=HISTORY):
+def prune(days, now, folder=None):
     """The history's files older than days taken away; all of them when it is 0."""
     removed = 0
+    folder = folder or HISTORY
     try:
         names = os.listdir(folder)
     except OSError:

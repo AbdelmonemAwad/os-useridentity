@@ -95,7 +95,7 @@ def server(root, name):
     return None
 
 
-def read(path=CONFIG):
+def read(path=None):
     out = {
         'read': False, 'enabled': False, 'ldap_server': '', 'server': None, 'dcs': [], 'bad_dcs': [],
         'interfaces': ['lan'], 'port': PORT, 'local_port': LOCAL_PORT, 'lifetime': LIFETIME * 60,
@@ -104,7 +104,7 @@ def read(path=CONFIG):
         'groups': [], 'users': [], 'cut_lists': [], 'xgs': False,
     }
     try:
-        root = ET.parse(path).getroot()
+        root = ET.parse(path or CONFIG).getroot()
     except (OSError, ET.ParseError):
         return out
     out['read'] = True
@@ -140,12 +140,12 @@ def read(path=CONFIG):
     return out
 
 
-def aliases(path=CONFIG):
+def aliases(path=None):
     """{name: {'uuid', 'enabled', 'type', 'ours', 'description'}} of every alias in Firewall: Aliases. The
     plugin's own are named uid_ and described 'User Identity: ' (aliases.php writes them)."""
     out = {}
     try:
-        root = ET.parse(path).getroot()
+        root = ET.parse(path or CONFIG).getroot()
     except (OSError, ET.ParseError):
         return out
     for alias in root.findall('OPNsense/Firewall/Alias/aliases/alias'):
@@ -161,12 +161,12 @@ def aliases(path=CONFIG):
     return out
 
 
-def interface_addresses(path=CONFIG):
+def interface_addresses(path=None):
     """{key: IPv4 address} of the interfaces config.xml gives a static address - for the NXLog snippet
     the page shows; one that takes its address from upstream is not there."""
     out = {}
     try:
-        root = ET.parse(path).getroot()
+        root = ET.parse(path or CONFIG).getroot()
     except (OSError, ET.ParseError):
         return out
     found = root.find('interfaces')
