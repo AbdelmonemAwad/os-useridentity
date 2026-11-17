@@ -334,6 +334,30 @@ try:
           (True, {'192.0.2.30'}))
     with open(config, 'w', encoding='utf-8') as handle:
         handle.write(rows)
+    os.utime(config, (time.time() + 20, time.time() + 20))
+    service.refresh(time.time())
+    wait_for(lambda: not service.directory.answers.empty())
+    service.answers(when)
+
+    # the minute's run ends a mapping and empties its tables; the same user's next logon from the same
+    # address is written at once, not at the next minute (the review's sixth finding)
+    def logon_at(name, stamp):
+        arrival, source, message = LAB[name]
+        found = json.loads(message[message.find('{'):])
+        found['EventTime'] = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(stamp))
+        sender.sendto(('%s %s' % (source, json.dumps(found))).encode(), sock_path)
+        return service.receive(service.drain(), stamp + 1)
+
+    engine.save({'map': {}})
+    first = 1795000000.0
+    logon_at('runas-user1', first)
+    check('user1 logs on from 192.0.2.20: its table written', pf.held.get('uid_usr_user1'), {'192.0.2.20'})
+    expire.run(settings.read(), now=first + 480 * 60 + 5, pf=collector.tables.Pf(run=pf), macs=lambda: {})
+    check('the minute\'s run: the lifetime over, the mapping gone and the table emptied', (engine.load()['map'],
+          pf.held.get('uid_usr_user1')), ({}, set()))
+    logon_at('runas-user1', first + 480 * 60 + 10)
+    check('user1 logs on again from 192.0.2.20: its table written again at once', pf.held.get('uid_usr_user1'),
+          {'192.0.2.20'})
     service.close()
     check('closed: the socket taken away', os.path.exists(sock_path), False)
     sender.close()

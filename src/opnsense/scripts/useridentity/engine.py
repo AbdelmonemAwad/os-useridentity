@@ -106,11 +106,13 @@ def load(path=None):
             entry.setdefault('others', {})
             entry.setdefault('mac', '')
             clean[address] = entry
-    return {'version': 1, 'map': clean}
+    return {'version': 1, 'map': clean, 'writer': str(state.get('writer') or '')}
 
 
-def save(state, path=None):
-    write_json(path or MAP, {'version': 1, 'map': state['map'], 'saved': int(time.time())})
+def save(state, path=None, writer=''):
+    """The map written whole; writer says who wrote it - the collector by a name of its own, the minute's
+    run as 'minute' - so the collector knows when the tables may have been changed behind it."""
+    write_json(path or MAP, {'version': 1, 'map': state['map'], 'saved': int(time.time()), 'writer': writer})
 
 
 def shared(entry, now, lifetime):

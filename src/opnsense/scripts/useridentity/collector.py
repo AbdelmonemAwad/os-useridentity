@@ -222,6 +222,8 @@ class Collector:
             self.groups['users'] = {}
         self.ldap_failing = False
         self.written = {}
+        # the name this collector signs map.json with: another name there means another wrote it
+        self.token = 'collector %d %s' % (os.getpid(), os.urandom(4).hex())
         self.directory = Asker(self.conf, ldap3=ldap3)
         self.directory.start()
         self.sock = None
@@ -348,12 +350,12 @@ class Collector:
             return []
         changes = []
         with engine.locked():
-            state = engine.load()
+            state = self.load()
             for sender, event in accepted:
                 made = engine.see(state, event, now, self.conf['lifetime'], sender)
                 self.sources.changes(sender, made)
                 changes.extend(made)
-            engine.save(state)
+            engine.save(state, writer=self.token)
             self.write_tables(state)
         self.after(changes, now)
         if self.asking():
@@ -394,7 +396,16 @@ class Collector:
             self.groups_dirty = False
         if got:
             with engine.locked():
-                self.write_tables(engine.load())
+                self.write_tables(self.load())
+
+    def load(self):
+        """The map, read under the lock. When the collector did not write it last - the minute's run,
+        Forget all, or a collector before this one - the tables may have changed behind it: what it
+        wrote to each is forgotten, and each is made whole again at its next write."""
+        state = engine.load()
+        if state.get('writer') != self.token:
+            self.written = {}
+        return state
 
     def write_tables(self, state):
         """The tables the map asks for, those that changed since the last write; under the lock."""
@@ -439,7 +450,7 @@ class Collector:
     def start(self, now):
         """At the start: the map's tables written whole."""
         with engine.locked():
-            self.write_tables(engine.load())
+            self.write_tables(self.load())
         self.sources.save()
 
     def loop(self):

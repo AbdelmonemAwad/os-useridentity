@@ -262,13 +262,15 @@ with tempfile.TemporaryDirectory() as tmp:
     engine.see(state, ev('user1', '192.0.2.20', T0), T0, LIFE)
     engine.save(state, path)
     check('the map saved and read again', engine.load(path)['map'], state['map'])
+    engine.save(state, path, writer='minute')
+    check('the map says who wrote it last', engine.load(path)['writer'], 'minute')
     check('the map: 0640', oct(os.stat(path).st_mode & 0o777), '0o640')
     with open(path, 'w') as handle:
         handle.write('{"map": {"192.0.2.9": {"user": ""}, "192.0.2.8": "x", "192.0.2.7": {"user": "user7"}}}')
     check('a map with entries of no user: those dropped', sorted(engine.load(path)['map']), ['192.0.2.7'])
     with open(path, 'w') as handle:
         handle.write('not json')
-    check('a map that cannot be read: empty', engine.load(path), {'version': 1, 'map': {}})
+    check('a map that cannot be read: empty, written by no one', engine.load(path), {'version': 1, 'map': {}, 'writer': ''})
     lock = os.path.join(tmp, 'lock')
     with engine.locked(lock) as first:
         with engine.locked(lock, wait=0.2) as second:
