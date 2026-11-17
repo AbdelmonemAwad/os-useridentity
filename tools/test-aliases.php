@@ -344,6 +344,10 @@ VALIDATION;
         'configuration - switched off, not removed', 'uid_grp_Cut: removed'], 'off: said one line each');
     check(Aliases::withoutOwnCuts('<x/><cut_lists>o9,a3,o8</cut_lists>', ['a3']) === '<x/><cut_lists>o9,o8</cut_lists>',
         'the cut list read without the plugin\'s own entries');
+    check(Aliases::references('<a/><UserIdentity version="1.0.0"><groups><group uuid="g1"><alias>uid_grp_X</alias></group>' .
+        '</groups><general><cut_added>a3</cut_added></general></UserIdentity><rule>uid_grp_X</rule><cut_lists>o9,a3</cut_lists>',
+        ['a3']) === '<a/><UserIdentity/><rule>uid_grp_X</rule><cut_lists>o9</cut_lists>',
+        'what is read for references: the plugin\'s own section left out - its rows name its aliases - and its cut entries');
     check(Aliases::owned('uid_grp_G_Staff', 'User Identity: group G-Staff') && !Aliases::owned('uid_grp_G_Staff', 'mine') &&
         !Aliases::owned('office', 'User Identity: x'), 'an alias is the plugin\'s by its name and its description together');
 
@@ -409,9 +413,38 @@ namespace { require "' . $root . '/src/opnsense/mvc/app/library/OPNsense/UserIde
 ');
     copy($root . '/src/opnsense/scripts/useridentity/aliases.php', $tmp . '/aliases.php');
 
-    function run_script($tmp, $state, $env, $args = '')
+    /* config.xml as OPNsense would hold what the stand-ins' state says: the plugin's own section - its
+       rows carry the alias names, and its record of the cut list the uuids - the aliases, XGS: Settings'
+       cut list, and $more, a rule say */
+    function config_text($s, $more = '')
     {
-        $prefix = '';
+        $rows = '';
+        foreach (['groups' => 'group', 'users' => 'user'] as $list => $kind) {
+            $rows .= '<' . $list . '>';
+            foreach ($s[$list] ?? [] as $uuid => $row) {
+                $rows .= sprintf('<%s uuid="%s"><enabled>%s</enabled><name>%s</name><alias>%s</alias><description/></%s>',
+                    $kind, $uuid, $row['enabled'], $row['name'], $row['alias'], $kind);
+            }
+            $rows .= '</' . $list . '>';
+        }
+        $aliases = '';
+        foreach ($s['aliases'] ?? [] as $uuid => $a) {
+            $aliases .= sprintf('<alias uuid="%s"><enabled>%s</enabled><name>%s</name><type>%s</type>' .
+                '<description>%s</description></alias>', $uuid, $a['enabled'] ?? '1', $a['name'] ?? '', $a['type'] ?? '',
+                $a['description'] ?? '');
+        }
+        return '<?xml version="1.0"?>' . "\n" . '<opnsense><OPNsense><UserIdentity version="1.0.0"><general><enabled>' .
+            ($s['enabled'] ?? '0') . '</enabled><cut_added>' . ($s['cut_added'] ?? '') . '</cut_added></general>' . $rows .
+            '</UserIdentity><Firewall><Alias><aliases>' . $aliases . '</aliases></Alias></Firewall><XGS><general><cut_lists>' .
+            ($s['cut_lists'] ?? '') . '</cut_lists></general></XGS></OPNsense>' . $more . '</opnsense>' . "\n";
+    }
+
+    /* aliases.php run as configd runs it, with config.xml written from the state first */
+    function run_script($tmp, $state, $env, $args = '', $more = '')
+    {
+        $config = $tmp . '/config.xml';
+        file_put_contents($config, config_text(json_decode((string)@file_get_contents($state), true) ?: [], $more));
+        $prefix = 'USERIDENTITY_CONFIG=' . escapeshellarg($config) . ' ';
         foreach ($env as $k => $v) {
             $prefix .= $k . '=' . escapeshellarg($v) . ' ';
         }
@@ -440,13 +473,34 @@ namespace { require "' . $root . '/src/opnsense/mvc/app/library/OPNsense/UserIde
     [$out, $saved] = run_script($tmp, $state, ['XGS' => '1']);
     check(($out['status'] ?? '') === 'ok' && array_column($saved['aliases'], 'name') === ['blocked'] &&
         ($saved['cut_lists'] ?? '') === 'owner-1,owner-2' && ($saved['saved'] ?? 0) === 2,
-        'aliases.php, off: the plugin\'s aliases removed - only the plugin had them in the cut list - and out of it, saved once');
+        'aliases.php, off, config.xml holding the plugin\'s rows: the plugin\'s aliases removed - its own rows and cut ' .
+        'list entries are no one else\'s - and out of the cut list, saved once');
+    $saved['enabled'] = '1';
+    file_put_contents($state, json_encode($saved));
+    [$out, $saved] = run_script($tmp, $state, ['XGS' => '1']);
+    $saved['enabled'] = '0';
+    file_put_contents($state, json_encode($saved));
+    [$out, $saved] = run_script($tmp, $state, ['XGS' => '1'], '',
+        '<filter><rule><source><network>uid_grp_G_Staff</network></source></rule></filter>');
+    $left = [];
+    foreach ($saved['aliases'] as $alias) {
+        $left[$alias['name']] = $alias['enabled'];
+    }
+    check($left === ['blocked' => '1', 'uid_grp_G_Staff' => '0'],
+        'aliases.php, off, a rule naming one: that one switched off, the other removed');
+    /* the owner deletes the alias the rule named, to go on with the rest */
+    foreach ($saved['aliases'] as $uuid => $alias) {
+        if ($alias['name'] === 'uid_grp_G_Staff') {
+            unset($saved['aliases'][$uuid]);
+        }
+    }
+    file_put_contents($state, json_encode($saved));
     $saved['enabled'] = '1';
     $saved['users']['s1']['alias'] = 'uid_usr_bad-name';
     file_put_contents($state, json_encode($saved));
     [$out, $after] = run_script($tmp, $state, ['XGS' => '1']);
     check(($out['status'] ?? '') === 'failed' && count($out['errors'] ?? []) === 1 &&
-        strpos($out['errors'][0], 'must start with a letter') !== false && ($after['saved'] ?? 0) === 2 &&
+        strpos($out['errors'][0], 'must start with a letter') !== false && ($after['saved'] ?? 0) === ($saved['saved'] ?? 0) &&
         array_column($after['aliases'], 'name') === ['blocked'], 'aliases.php, a name the model refuses: said, nothing saved');
     $saved['users']['s1']['alias'] = 'uid_usr_user1';
     file_put_contents($state, json_encode($saved));

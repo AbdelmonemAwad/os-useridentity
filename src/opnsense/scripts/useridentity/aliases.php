@@ -47,9 +47,10 @@ if (!$remove) {
 }
 
 $model = new Alias();
-$config = (string)@file_get_contents('/conf/config.xml');
+/* config.xml's text, read for what else names an alias; the tests give it another */
+$config = (string)@file_get_contents(getenv('USERIDENTITY_CONFIG') ?: '/conf/config.xml');
 $before = Aliases::ours($model);
-$done = Aliases::reconcile($model, Aliases::withoutOwnCuts($config, array_column($before, 'uuid')), $wanted);
+$done = Aliases::reconcile($model, Aliases::references($config, array_column($before, 'uuid')), $wanted);
 $changes = $done['changes'];
 
 $messages = [];

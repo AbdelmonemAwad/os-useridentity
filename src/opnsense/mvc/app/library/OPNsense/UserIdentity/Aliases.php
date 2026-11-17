@@ -73,6 +73,24 @@ class Aliases
     }
 
     /**
+     * $config without the plugin's own section: its rows name the aliases and its record of the cut
+     * list holds their uuids, and neither is something else naming or holding them.
+     */
+    public static function withoutOwnSection($config)
+    {
+        return preg_replace('#<UserIdentity\b[^>]*>.*?</UserIdentity>#s', '<UserIdentity/>', (string)$config);
+    }
+
+    /**
+     * What reconcile() reads for the references to an alias: config.xml without the plugin's own section,
+     * and without the plugin's own entries in XGS: Settings' cut list.
+     */
+    public static function references($config, array $uuids)
+    {
+        return self::withoutOwnCuts(self::withoutOwnSection($config), $uuids);
+    }
+
+    /**
      * Make the model's aliases say what $wanted says - [name => ['description' => text]], each External,
      * switched on - and return ['changes' => what changed, 'notes' => what was left as it is and why],
      * one line each. An alias of this plugin's no longer wanted is removed; when something else in the
