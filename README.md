@@ -78,8 +78,9 @@ NXLog's and the domain controller's behaviour, not this plugin's:
   the plugin reads only what the named addresses send, and syslog-ng's source is reached by nothing
   else from the network. syslog-ng cannot listen on an interface's address, and one source that cannot
   bind stops it whole, with every log of OPNsense's: so the source is written only on a port no other
-  program holds, and only when syslog-ng takes its whole configuration with it; else the page says why,
-  and no redirect is registered. The lines go to no log file: syslog-ng hands each to the plugin's
+  program holds, and only when syslog-ng takes its whole configuration with it - when it does not, the
+  file before is put back and syslog-ng is not restarted, since the refusal may be another file's; else
+  the page says why, and no redirect is registered. The lines go to no log file: syslog-ng hands each to the plugin's
   collector, over a socket, with the address it came from;
 - **what maps** - a ticket issued (4768, Status 0x0), its address written `::ffff:a.b.c.d` for IPv4,
   comes 1.5 to 2.4 seconds after a logon, and again at an unlock; network logons to the domain

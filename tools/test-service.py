@@ -180,9 +180,19 @@ try:
     check('sockstat that cannot be read: not written', (out['written'], out['reason']),
           (False, 'sockstat could not be read, so port 5141 is not known to be free'))
     out = syslogng.apply(conf, run=run_with(syntax=(1, '\nError parsing config, syntax error near line 3\n')), now=105)
-    check('syslog-ng refusing its configuration with the file: taken away, its first line said',
-          (out['written'], out['reason'], os.path.exists(syslogng.CONF)),
-          (False, 'syslog-ng refused its configuration with it: Error parsing config, syntax error near line 3', False))
+    check('syslog-ng refusing its configuration with the file, none there before: taken away again, its first line '
+          'said, nothing said changed - a restart would stop syslog-ng whole were the refusal another file\'s',
+          (out['written'], out['changed'], out['reason'], os.path.exists(syslogng.CONF)),
+          (False, False, 'syslog-ng refused its configuration with it: Error parsing config, syntax error near line 3', False))
+    syslogng.apply(conf, run=run_with(), now=105)
+    good = open(syslogng.CONF, encoding='utf-8').read()
+    out = syslogng.apply(dict(conf, local_port=5142), run=run_with(syntax=(1, 'Error parsing config\n')), now=105)
+    check('syslog-ng refusing it with another port, a file there before: that file put back whole, nothing said '
+          'changed, no redirect', (out['written'], out['changed'], syslogng.read(syslogng.CONF) == good,
+                                   os.path.exists(syslogng.CONF + '.new')), (False, False, True, False))
+    out = syslogng.apply(conf, run=run_with(syntax=(1, 'Error in a file of another\n')), now=105)
+    check('syslog-ng refusing a configuration this very file is already in: the file left, nothing said changed',
+          (out['written'], out['changed'], syslogng.read(syslogng.CONF) == good), (False, False, True))
     for port, why in ((5140, 'port 5140 may not be used'), (1023, 'port 1023 may not be used')):
         out = syslogng.apply(dict(conf, local_port=port), run=run_with(), now=106)
         check('local port %d: not written' % port, (out['written'], out['reason']), (False, why))

@@ -11,9 +11,12 @@ syslog-ng.conf includes.
 
 One source that cannot bind stops syslog-ng whole, and every log of OPNsense's with it (os-xgs-npu,
 xgs.inc). So the file is written only when the port is one a source may take - 1024 to 65535, not
-5140, os-xgs-npu's - with no other program listening on it (sockstat), and only when syslog-ng reads
-its whole configuration with it (syslog-ng --syntax-only); else it is taken away, and the page says
-why. Off, or with no domain controller named, it is taken away too. The source is a source of its
+5140, os-xgs-npu's - with no other program listening on it (sockstat); else it is taken away, and the
+page says why. And it stays only when syslog-ng reads its whole configuration with it (syslog-ng
+--syntax-only): when syslog-ng does not, the file that was there before is put back - none, when there
+was none - and syslog-ng is not restarted, since the refusal may be another file's and a restart would
+then stop it whole; no redirect is registered until a check passes. Off, or with no domain controller
+named, it is taken away too. The source is a source of its
 own, never s_all, so none of OPNsense's filters files the lines: no event is written to a log.
 
 What was done is kept in /var/db/os-useridentity/syslog.json, which the firewall hook reads: the
@@ -140,21 +143,39 @@ def apply(conf=None, path=None, status_path=None, run=None, now=None):
     want = content(conf)
     if before != want:
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path + '.new', 'w', encoding='utf-8') as handle:
-                handle.write(want)
-            os.chmod(path + '.new', 0o644)
-            os.replace(path + '.new', path)
+            put(path, want)
         except OSError as error:
             remove(path + '.new')
             return finish(away('not written: %s' % error), status_path)
         out['changed'] = True
     status, said = run([SYSLOG_NG, '--syntax-only', '--cfgfile=' + MAIN])
     if status != 0:
+        # The refusal may be another file's, and a restart would then stop syslog-ng whole, with every
+        # log: so what was there before is put back - no file, when there was none - and nothing is said
+        # changed, so syslog-ng is not restarted; the redirect waits for a check that passes.
         first = next((line.strip() for line in said.splitlines() if line.strip()), 'no reason given')
-        return finish(away('syslog-ng refused its configuration with it: %s' % first[:200]), status_path)
+        out['reason'] = 'syslog-ng refused its configuration with it: %s' % first[:200]
+        out['changed'] = False
+        if before is None:
+            remove(path)
+        elif before != want:
+            try:
+                put(path, before)
+            except OSError:
+                remove(path + '.new')
+                remove(path)
+        return finish(out, status_path)
     out['written'] = True
     return finish(out, status_path)
+
+
+def put(path, text):
+    """The file written beside it and put in place in one step, 0644 as syslog-ng's others; raises OSError."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + '.new', 'w', encoding='utf-8') as handle:
+        handle.write(text)
+    os.chmod(path + '.new', 0o644)
+    os.replace(path + '.new', path)
 
 
 def finish(out, status_path):
