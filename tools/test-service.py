@@ -158,8 +158,10 @@ try:
                                                                                 out['reason']), (True, True, 5141, ''))
     check('source: on 127.0.0.1, TCP, the lines taken whole, to the collector\'s socket as "$SOURCEIP $MSG"',
           all(part in written for part in ('network(ip("127.0.0.1") port(5141) transport("tcp") flags(no-parse)',
-                                           'unix-dgram("/var/run/useridentity.sock" template("${SOURCEIP} ${MSG}"))',
+                                           'unix-dgram("/var/run/useridentity.sock" template("${SOURCEIP} ${MSG}")',
                                            'source(s_useridentity);', 'destination(d_useridentity);')), True)
+    check('source: the collector\'s socket opened again one second after it is back, not syslog-ng\'s 60',
+          'unix-dgram("/var/run/useridentity.sock" template("${SOURCEIP} ${MSG}") time-reopen(1));' in written, True)
     check('source: never s_all, so no filter of OPNsense\'s files the lines', 's_all' in written, False)
     check('source: the file 0644, as syslog-ng\'s others', oct(stat.S_IMODE(os.stat(syslogng.CONF).st_mode)), '0o644')
     check('source: sockstat asked first, then syslog-ng\'s check of its whole configuration',

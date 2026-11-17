@@ -48,14 +48,15 @@ TAKEN = (5140,)
 TEMPLATE = '''# os-useridentity: the domain controllers' logon events (scripts/useridentity/syslogng.py writes
 # this file, and takes it away when the plugin is off). pf redirects port %(port)d of the chosen
 # interfaces, from the named domain controllers alone, to this source; each line goes to the
-# collector as "$SOURCEIP $MSG", and to no log file.
+# collector as "$SOURCEIP $MSG", and to no log file. The collector's socket is opened again one
+# second after the collector is back, not after syslog-ng's 60.
 source s_useridentity {
     network(ip("127.0.0.1") port(%(local)d) transport("tcp") flags(no-parse) log-msg-size(65536)
             max-connections(64));
 };
 
 destination d_useridentity {
-    unix-dgram("%(socket)s" template("${SOURCEIP} ${MSG}"));
+    unix-dgram("%(socket)s" template("${SOURCEIP} ${MSG}") time-reopen(1));
 };
 
 log {
