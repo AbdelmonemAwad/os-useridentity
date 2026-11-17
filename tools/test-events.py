@@ -168,6 +168,13 @@ for name, line, want in cases:
     result = events.parse(line)
     check(name, kind(result) if result[0] == 'event' else result, want)
 
+deep = '{"EventID": 4624, "Data": ' + '[' * 100000 + ']' * 100000 + '}'
+try:
+    got = events.parse(deep)
+except RecursionError:
+    got = 'RecursionError raised, and the rest of its batch lost with it'
+check('a line nested deeper than json reads: refused as unreadable, nothing raised', got, ('refused', 'unreadable'))
+
 framed = '<14>Nov 17 18:41:35 DC1.example.test MSWinEventLog 1 Security 1 ' + TICKET
 check('the same ticket after a syslog header: the JSON after it read', kind(events.parse(framed)),
       ('event', 'user1', '192.0.2.20', 4768))

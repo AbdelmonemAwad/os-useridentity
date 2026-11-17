@@ -132,7 +132,8 @@ def parse(message):
         return 'refused', 'unreadable'
     try:
         found = json.loads(message[start:])
-    except ValueError:
+    except (ValueError, RecursionError):
+        # RecursionError: a line nested deeper than json reads - raised, it would lose its whole batch
         return 'refused', 'unreadable'
     if not isinstance(found, dict):
         return 'refused', 'unreadable'
