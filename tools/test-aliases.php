@@ -534,6 +534,28 @@ namespace { require "' . $root . '/src/opnsense/mvc/app/library/OPNsense/UserIde
     check(($out['status'] ?? '') === 'ok' && array_column($after['aliases'], 'name') === ['blocked'] &&
         ($after['cut_lists'] ?? '') === 'owner-1,owner-2' && ($after['cut_added'] ?? 'x') === '',
         'aliases.php --remove: every alias of the plugin\'s out, out of the cut list and of the record');
+
+    /* a group's name as long as its row takes, 512 characters, made the alias's description refused - the
+       Alias model takes 255 bytes - and the whole Apply stop (the review's eighth finding) */
+    $long = $after;
+    $long['groups']['g1']['name'] = 'CN=' . str_repeat('Department of things,', 23) . 'DC=example,DC=test';
+    file_put_contents($state, json_encode($long));
+    [$out, $after] = run_script($tmp, $state, ['XGS' => '1']);
+    $described = '';
+    foreach ($after['aliases'] ?? [] as $alias) {
+        if ($alias['name'] === 'uid_grp_G_Staff') {
+            $described = $alias['description'];
+        }
+    }
+    check(($out['status'] ?? '') === 'ok' && strlen($described) === 255 && strpos($described, 'User Identity: group CN=') === 0,
+        'aliases.php, a group named by a DN of ' . strlen($long['groups']['g1']['name']) . ' characters: Apply done, the ' .
+        'description cut to the 255 bytes the Alias model takes');
+    $greek = str_repeat("\u{03b5}", 300);
+    $cut = Aliases::describe('user', $greek);
+    check(strlen($cut) <= 255 && preg_match('//u', $cut) === 1 && strpos($greek, substr($cut, strlen('User Identity: user '))) === 0,
+        'a description of letters two bytes each: cut at 255 bytes or under, never inside a letter');
+    check(Aliases::describe('group', "G\tStaff") === 'User Identity: group G Staff', 'a tab in a name made a space');
+    check(Aliases::describe('group', 'G-Staff') === 'User Identity: group G-Staff', 'a short name as it is');
     $ours = ['a' => ['uuid' => 'p1', 'enabled' => true], 'b' => ['uuid' => 'p2', 'enabled' => true],
         'c' => ['uuid' => 'p3', 'enabled' => false]];
     check(Aliases::cutLists(['o1', 'p2'], $ours, ['a' => [], 'b' => [], 'c' => []], ['p2']) === [['o1', 'p2', 'p1'], ['p2', 'p1']],

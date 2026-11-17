@@ -26,6 +26,26 @@ class Aliases
     const PREFIX = 'uid_';
     const DESCRIPTION = 'User Identity: ';
     const LONGEST = 31;
+    const DESCRIBED = 255;
+
+    /**
+     * The description of the alias of a group or a user row: 'User Identity: group ' and the row's
+     * name - a DN may run to 512 characters - cut to the 255 bytes the Alias model takes (its
+     * DescriptionField counts bytes), never inside a character; a control character made a space.
+     */
+    public static function describe($kind, $name)
+    {
+        $text = self::DESCRIPTION . $kind . ' ' . preg_replace('/[\x00-\x1f\x7f]+/', ' ', (string)$name);
+        if (strlen($text) <= self::DESCRIBED) {
+            return $text;
+        }
+        $text = substr($text, 0, self::DESCRIBED);
+        while ($text !== '' && preg_match('//u', $text) !== 1) {
+            /* a character cut in two: its first bytes go too */
+            $text = substr($text, 0, -1);
+        }
+        return $text;
+    }
 
     /**
      * An alias this plugin made: its name and its description both say so.

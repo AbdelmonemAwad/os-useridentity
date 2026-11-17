@@ -41,7 +41,7 @@ if (!$remove) {
             foreach ($settings->$list->$kind->iterateItems() as $row) {
                 $alias = (string)$row->alias;
                 if ((string)$row->enabled === '1' && $alias !== '' && !isset($wanted[$alias])) {
-                    $wanted[$alias] = ['description' => Aliases::DESCRIPTION . $kind . ' ' . (string)$row->name];
+                    $wanted[$alias] = ['description' => Aliases::describe($kind, (string)$row->name)];
                 }
             }
         }
