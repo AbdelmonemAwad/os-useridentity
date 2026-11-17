@@ -10,10 +10,14 @@ and os-xgs-npu.
 
 Nothing here writes. A config.xml that cannot be read gives the defaults with read False, and every
 caller does nothing it would regret on them: the plugin is off by default.
+
+    settings.py enabled    {"enabled": ..., "read": ...} - for the installer and the package's scripts
 """
 
 import ipaddress
+import json
 import re
+import sys
 import xml.etree.ElementTree as ET
 
 CONFIG = '/conf/config.xml'
@@ -176,3 +180,16 @@ def interface_addresses(path=None):
         if address:
             out[node.tag] = address
     return out
+
+
+def main(argv):
+    if argv[1:2] == ['enabled']:
+        conf = read()
+        print(json.dumps({'enabled': conf['enabled'], 'read': conf['read']}))
+        return 0
+    print('usage: settings.py enabled', file=sys.stderr)
+    return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))
