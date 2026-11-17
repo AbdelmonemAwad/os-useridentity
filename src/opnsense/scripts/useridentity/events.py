@@ -25,7 +25,8 @@ address. Every other event is counted by its ID and goes no further.
     judge(event, arrival, context)    None when the event may map, else the reason it may not
 
 Refused, each counted on the page by its reason: a line that is not JSON; a ticket not issued; a
-computer account (its name ends with $ - every logon through a task or runas gives one first); an
+ticket issued with no pre-authentication (PreAuthType 0 - phase 0's lab saw 2 on every user's), which any
+machine can ask for an account that does not require it, from its own address; a computer account (its name ends with $ - every logon through a task or runas gives one first); an
 account that is not a domain user (its SID is not S-1-5-21-..., as SYSTEM, ANONYMOUS LOGON and the
 virtual accounts); no address, or one that is no client's (loopback, link-local, multicast,
 unspecified, broadcast); no event time.
@@ -46,8 +47,9 @@ import time
 
 MAPPING = (4768, 4624)
 
-REFUSED = ('unreadable', 'failed', 'computer', 'not a user', 'no address', 'not a client address', 'no time',
-           'not a domain controller', 'stale', 'clock', 'firewall', 'domain controller', 'never map', 'ignored')
+REFUSED = ('unreadable', 'failed', 'no pre-authentication', 'computer', 'not a user', 'no address',
+           'not a client address', 'no time', 'not a domain controller', 'stale', 'clock', 'firewall',
+           'domain controller', 'never map', 'ignored')
 
 NOT_USERS = ('anonymous logon', '-', '')
 LIMITED = ipaddress.ip_address('255.255.255.255')
@@ -142,6 +144,10 @@ def parse(message):
         return 'other', number
     if number == 4768 and str(found.get('Status', '')).strip().lower() not in ('0x0', '0'):
         return 'refused', 'failed'
+    if number == 4768 and str(found.get('PreAuthType', '')).strip() == '0':
+        # an account with "Do not require Kerberos preauthentication": the KDC issues its ticket to any
+        # machine that asks, from that machine's own address - nothing says the user was there
+        return 'refused', 'no pre-authentication'
     raw_user = str(found.get('TargetUserName') or '')
     user = user_name(raw_user)
     if user.endswith('$'):

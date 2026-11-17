@@ -76,6 +76,7 @@
         const reasons = {
             'unreadable': "{{ lang._('not readable') }}",
             'failed': "{{ lang._('ticket not issued') }}",
+            'no pre-authentication': "{{ lang._('ticket with no pre-authentication') }}",
             'computer': "{{ lang._('computer account') }}",
             'not a user': "{{ lang._('not a domain user') }}",
             'no address': "{{ lang._('no address') }}",

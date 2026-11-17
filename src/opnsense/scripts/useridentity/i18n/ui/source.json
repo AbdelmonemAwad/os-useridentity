@@ -145,5 +145,6 @@
  "the directory does not hold this user",
  "the directory not asked yet",
  "ticket not issued",
+ "ticket with no pre-authentication",
  "uid_ and letters, digits or _, 31 characters at most."
 ]

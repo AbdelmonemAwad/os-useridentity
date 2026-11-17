@@ -120,6 +120,16 @@ cases = [
     ('a ticket refused by the KDC, Status 0x6', edited(TICKET, Status='0x6'), ('refused', 'failed')),
     ('a ticket with Status 0x12', edited(TICKET, Status='0x12'), ('refused', 'failed')),
     ('a ticket with no Status', edited(TICKET, Status=None), ('refused', 'failed')),
+    ('a ticket issued with no pre-authentication (PreAuthType 0): anyone could have asked it',
+     edited(TICKET, PreAuthType='0'), ('refused', 'no pre-authentication')),
+    ('a ticket pre-authenticated by password (PreAuthType 2, as the lab\'s)', edited(TICKET, PreAuthType='2'),
+     ('event', 'user1', '192.0.2.20', 4768)),
+    ('a ticket pre-authenticated by a certificate (PreAuthType 16)', edited(TICKET, PreAuthType='16'),
+     ('event', 'user1', '192.0.2.20', 4768)),
+    ('a ticket with no PreAuthType field: not known, taken', edited(TICKET, PreAuthType=None),
+     ('event', 'user1', '192.0.2.20', 4768)),
+    ('a network logon with a PreAuthType of 0 (no such field in a 4624): taken', edited(LOGON, PreAuthType='0'),
+     ('event', 'user1', '192.0.2.20', 4624)),
     ('a ticket from ::1, the domain controller itself', edited(TICKET, IpAddress='::1'),
      ('refused', 'not a client address')),
     ('a ticket from 127.0.0.1', edited(TICKET, IpAddress='127.0.0.1'), ('refused', 'not a client address')),
@@ -215,8 +225,14 @@ for name in ('ticket-user1', 'logon-user1', 'renewal-user2', 'runas-user3'):
           None)
 check('every reason judge() and parse() give is one the page knows',
       {'stale', 'clock', 'firewall', 'domain controller', 'never map', 'ignored', 'failed', 'computer', 'not a user',
-       'no address', 'not a client address', 'no time', 'unreadable', 'not a domain controller'} - set(events.REFUSED),
-      set())
+       'no address', 'not a client address', 'no time', 'unreadable', 'not a domain controller',
+       'no pre-authentication'} - set(events.REFUSED), set())
+check('the lab\'s tickets issued to users: each pre-authenticated, PreAuthType 2',
+      sorted({json.loads(LAB[name][2][LAB[name][2].find('{'):]).get('PreAuthType') for name in LAB
+              if name.startswith(('ticket-user', 'runas-user'))}), ['2'])
+VOLT = open(os.path.join(ROOT, 'src', 'opnsense', 'mvc', 'app', 'views', 'OPNsense', 'UserIdentity', 'index.volt'),
+            encoding='utf-8').read()
+check('the page names the reason no pre-authentication', "'no pre-authentication':" in VOLT, True)
 
 print('%d of %d checks failed' % (failures, checks) if failures else '%d checks passed' % checks)
 sys.exit(1 if failures else 0)
