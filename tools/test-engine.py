@@ -111,6 +111,18 @@ check('MAC check: another device on the address - the mapping goes',
       engine.check_macs(state, {'192.0.2.20': '02:00:00:00:00:15', '2001:db8::20': '02:00:00:00:00:14'}),
       [('left', '192.0.2.20', ('user0', 'mac'))])
 check('MAC check: the rest kept', sorted(state['map']), ['192.0.2.21', '192.0.2.22', '2001:db8::20'])
+# the address handed to another device, and another user logs on from it: its MAC is that device's, and
+# the new mapping must not be taken for a device that changed (the review's seventh finding)
+moved = fresh()
+engine.see(moved, ev('user1', '192.0.2.23', T0), T0, LIFE)
+engine.check_macs(moved, {'192.0.2.23': '02:00:00:00:00:17'})
+engine.see(moved, ev('user2', '192.0.2.23', T0 + 60), T0 + 60, LIFE)
+check('another user on the address: the MAC of the one before forgotten', moved['map']['192.0.2.23']['mac'], '')
+check('and the MAC check then takes the new device\'s, dropping nothing',
+      (engine.check_macs(moved, {'192.0.2.23': '02:00:00:00:00:18'}), moved['map']['192.0.2.23']['user'],
+       moved['map']['192.0.2.23']['mac']), ([], 'user2', '02:00:00:00:00:18'))
+engine.see(moved, ev('user2', '192.0.2.23', T0 + 120), T0 + 120, LIFE)
+check('the same user again: the MAC kept', moved['map']['192.0.2.23']['mac'], '02:00:00:00:00:18')
 check('flush: every mapping forgotten', (engine.flush(state), state['map']),
       ([('left', '192.0.2.21', ('user1', 'flushed')), ('left', '192.0.2.22', ('user2', 'flushed')),
         ('left', '2001:db8::20', ('user3', 'flushed'))], {}))

@@ -146,8 +146,10 @@ def see(state, event, arrival, lifetime, source=''):
         old = entry['user']
         others[old] = max(others.get(old, 0), entry['last'])
         others.pop(user, None)
+        # the MAC was the device of the user before: the address may have gone to another device with
+        # this logon, whose MAC the next check takes - kept, it would end the new mapping
         entry.update(user=user, domain=event.get('domain', ''), source=source, event=event['id'], first=when,
-                     last=when, expires=when + lifetime)
+                     last=when, expires=when + lifetime, mac='')
         changes = [('changed', where, (old, user))]
     else:
         others[user] = max(others.get(user, 0), when)
