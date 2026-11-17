@@ -85,7 +85,12 @@ def run(conf=None, now=None, pf=None, macs=None, flush=False):
         elif conf['mac_check'] and state['map']:
             changes += engine.check_macs(state, macs() if macs else host.macs())
         engine.save(state)
-        groups = engine.read_json(GROUPS, {}).get('users', {})
+        known = engine.read_json(GROUPS, {})
+        if (flush or not conf['enabled']) and known.get('users'):
+            # with the map, what the directory said of its users: only the live map is kept
+            known['users'] = {}
+            engine.write_json(GROUPS, known, mode=0o640)
+        groups = known.get('users', {})
         aliases = settings.aliases()
         want = engine.tables(state, groups, conf, tables.present(aliases))
         for name in tables.switched_off(aliases) - set(want):

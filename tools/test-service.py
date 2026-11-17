@@ -285,6 +285,13 @@ try:
     os.utime(config, (time.time() + 5, time.time() + 5))
     service.refresh(time.time())
     check('config.xml changed: read again', service.conf['log_names'], True)
+    service.conf = dict(service.conf, server=None)
+    when3, source, message = LAB['runas-user3']
+    sender.sendto(('%s %s' % (source, message)).encode(), sock_path)
+    service.receive(service.drain(), when3)
+    check('no directory chosen: the user mapped, nobody asked, no alert',
+          (engine.load()['map']['192.0.2.20']['user'], wait_for(lambda: not service.directory.answers.empty(), 0.5),
+           service.directory.waiting), ('user3', False, set()))
 
     # at a start: the map's tables written whole
     engine.save({'map': {'192.0.2.30': {'user': 'user1', 'first': when, 'last': when, 'expires': when + 999,
@@ -294,6 +301,10 @@ try:
     service.start(when)
     check('a start: the tables made from the map, whatever pf held', pf.held,
           {'uid_grp_G_Staff': {'192.0.2.30'}, 'uid_usr_user1': {'192.0.2.30'}})
+    service.groups['users'] = {'user1': {'in': ['g-staff'], 'at': when - 2000}, 'user8': {'in': [], 'at': when - 2000},
+                               'user9': {'in': [], 'at': when - 10}}
+    check('the directory\'s answers for users no longer mapped forgotten after 15 minutes - only the live map is kept',
+          (service.prune_groups(when), sorted(engine.read_json(collector.GROUPS, {})['users'])), (1, ['user1', 'user9']))
     service.close()
     check('closed: the socket taken away', os.path.exists(sock_path), False)
     sender.close()
@@ -328,9 +339,9 @@ try:
     with open(config, 'w', encoding='utf-8') as handle:
         handle.write(kept)
     out = expire.run(conf, now=now + 1, pf=collector.tables.Pf(run=pf), flush=True)
-    check('Forget all: every mapping gone, the tables emptied', (out['flushed'], engine.load()['map'],
-                                                                 pf.held['uid_grp_G_Staff'], pf.held['uid_usr_user1']),
-          (1, {}, set(), set()))
+    check('Forget all: every mapping gone, the tables emptied, the directory\'s answers about its users with them',
+          (out['flushed'], engine.load()['map'], pf.held['uid_grp_G_Staff'], pf.held['uid_usr_user1'],
+           engine.read_json(expire.GROUPS, {})['users']), (1, {}, set(), set(), {}))
     engine.save({'map': {'192.0.2.20': {'user': 'user1', 'first': now, 'last': now, 'expires': now + 999, 'mac': '',
                                         'others': {}}}})
     out = expire.run(dict(conf, enabled=False), now=now + 2, pf=collector.tables.Pf(run=pf), macs=lambda: {})

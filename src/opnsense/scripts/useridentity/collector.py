@@ -336,10 +336,12 @@ class Collector:
             engine.save(state)
             self.write_tables(state)
         self.after(changes, now)
-        for user in sorted({event['user'] for _, event in accepted}):
-            known = self.groups['users'].get(user)
-            if known is None or now - known.get('at', 0) >= CACHE:
-                self.directory.ask(user)
+        # the directory is asked only with one chosen and a group row on: a user row needs no group
+        if self.conf.get('server') and any(row['enabled'] for row in self.conf['groups']):
+            for user in sorted({event['user'] for _, event in accepted}):
+                known = self.groups['users'].get(user)
+                if known is None or now - known.get('at', 0) >= CACHE:
+                    self.directory.ask(user)
         return changes
 
     def answers(self, now):
@@ -399,9 +401,21 @@ class Collector:
             text = 'Two users were mapped to %s within the mapping lifetime: the latest holds it.' % where
             if self.conf['log_names']:
                 facts['users'] = users
-                text = '%s were mapped to %s within the mapping lifetime: %s holds it.' % (
-                    ', '.join(users), where, users[-1] if users else '')
+                text = '%s were mapped to %s within the mapping lifetime: the latest holds it.' % (
+                    ', '.join(users), where)
             outbox.alert('address-shared', 'User Identity: %s is shared' % where, text, facts, now=now)
+
+    def prune_groups(self, now):
+        """What the directory said of users no longer in the map, forgotten once it is older than CACHE:
+        only the live map is kept (settled point 14). How many were forgotten."""
+        mapped = {entry['user'] for entry in engine.load()['map'].values()}
+        users = self.groups['users']
+        gone = [user for user, known in users.items() if user not in mapped and now - known.get('at', 0) >= CACHE]
+        for user in gone:
+            del users[user]
+        if gone:
+            engine.write_json(GROUPS, self.groups, mode=0o640)
+        return len(gone)
 
     def start(self, now):
         """At the start: the map's tables written whole."""
@@ -410,7 +424,7 @@ class Collector:
         self.sources.save()
 
     def loop(self):
-        last_save = 0.0
+        last_save = last_prune = 0.0
         while running:
             try:
                 ready, _, _ = select.select([self.sock], [], [], 1.0)
@@ -426,6 +440,9 @@ class Collector:
                 if now - last_save >= 10:
                     self.sources.save()
                     last_save = now
+                if now - last_prune >= REFRESH:
+                    self.prune_groups(now)
+                    last_prune = now
             except Exception:                                            # noqa: BLE001
                 log('error: ' + traceback.format_exc().strip().splitlines()[-1], syslog.LOG_ERR)
                 time.sleep(1)
