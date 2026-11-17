@@ -1,0 +1,176 @@
+<!--
+    SPDX-License-Identifier: BSD-2-Clause
+    Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
+-->
+<model>
+    <mount>//OPNsense/UserIdentity</mount>
+    <version>1.0.0</version>
+    <description>User identity</description>
+    <items>
+        <!--
+            settings.py, aliases.php and plugins.inc.d/useridentity.inc read these straight out of
+            config.xml by element name, so the names are not free.
+        -->
+        <general>
+            <!-- Off by default: nothing is mapped until domain controllers and groups are named. -->
+            <enabled type="BooleanField">
+                <Required>Y</Required>
+                <Default>0</Default>
+            </enabled>
+            <!-- The domain controllers that send their logon events: pf lets these alone in (settled
+                 points 1 and 3). IPv4: syslog-ng's source listens on 127.0.0.1. -->
+            <domain_controllers type="NetworkField">
+                <Required>N</Required>
+                <AsList>Y</AsList>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+                <AddressFamily>ipv4</AddressFamily>
+                <ValidationMessage>IPv4 addresses of domain controllers, one each.</ValidationMessage>
+            </domain_controllers>
+            <interfaces type="InterfaceField">
+                <Required>N</Required>
+                <Multiple>Y</Multiple>
+                <Default>lan</Default>
+                <Filters>
+                    <if>/^(?!lo0$).*/</if>
+                </Filters>
+            </interfaces>
+            <!-- The TCP port the domain controllers send to on the firewall's addresses -->
+            <port type="IntegerField">
+                <Required>Y</Required>
+                <Default>514</Default>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>65535</MaximumValue>
+                <ValidationMessage>A port from 1 to 65535.</ValidationMessage>
+            </port>
+            <!-- syslog-ng's source on 127.0.0.1 (phase 0's A0: 5140 is os-xgs-npu's, 5141 free) -->
+            <local_port type="IntegerField">
+                <Required>Y</Required>
+                <Default>5141</Default>
+                <MinimumValue>1024</MinimumValue>
+                <MaximumValue>65535</MaximumValue>
+                <ValidationMessage>A port from 1024 to 65535.</ValidationMessage>
+            </local_port>
+            <!-- The groups: an LDAP entry of System: Access: Servers (settled point 11) -->
+            <ldap_server type="AuthenticationServerField">
+                <Required>N</Required>
+                <BlankDesc>None</BlankDesc>
+                <filters>
+                    <type>/^(ldap)$/</type>
+                </filters>
+            </ldap_server>
+            <nested type="BooleanField">
+                <Required>Y</Required>
+                <Default>1</Default>
+            </nested>
+            <!-- Minutes a mapping lives with no event: 8 hours (settled point 7) until the lab's A5. -->
+            <lifetime type="IntegerField">
+                <Required>Y</Required>
+                <Default>480</Default>
+                <MinimumValue>5</MinimumValue>
+                <MaximumValue>10080</MaximumValue>
+                <ValidationMessage>Minutes, from 5 to 10080.</ValidationMessage>
+            </lifetime>
+            <mac_check type="BooleanField">
+                <Required>Y</Required>
+                <Default>1</Default>
+            </mac_check>
+            <!-- Minutes after which an event arriving neither maps nor renews (the lab's A4) -->
+            <stale type="IntegerField">
+                <Required>Y</Required>
+                <Default>5</Default>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>1440</MaximumValue>
+                <ValidationMessage>Minutes, from 1 to 1440.</ValidationMessage>
+            </stale>
+            <never_map type="NetworkField">
+                <Required>N</Required>
+                <AsList>Y</AsList>
+                <WildcardEnabled>N</WildcardEnabled>
+                <ValidationMessage>Addresses or networks, one each.</ValidationMessage>
+            </never_map>
+            <ignore_users type="CSVListField">
+                <Required>N</Required>
+                <Mask>/^[^\r\n,;"\[\]:|=+*?&lt;&gt;\\\/]{1,64}$/u</Mask>
+                <MaskPerItem>Y</MaskPerItem>
+                <ValidationMessage>User names, one each, as the domain writes them.</ValidationMessage>
+            </ignore_users>
+            <!-- Privacy (settled point 14): counts, not names, in the system log; no history kept. -->
+            <log_names type="BooleanField">
+                <Required>Y</Required>
+                <Default>0</Default>
+            </log_names>
+            <history_days type="IntegerField">
+                <Required>Y</Required>
+                <Default>0</Default>
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>365</MaximumValue>
+                <ValidationMessage>Days, from 0 to 365.</ValidationMessage>
+            </history_days>
+            <!-- Alerts (settled point 13): a domain controller silent this many minutes; 0 is none -->
+            <alert_silent type="IntegerField">
+                <Required>Y</Required>
+                <Default>0</Default>
+                <MinimumValue>0</MinimumValue>
+                <MaximumValue>10080</MaximumValue>
+                <ValidationMessage>Minutes, from 0 to 10080.</ValidationMessage>
+            </alert_silent>
+        </general>
+        <!-- A table for each group row (settled point 5) - its alias proposed from the group's name,
+             editable - and for each user named (settled point 6). -->
+        <groups>
+            <group type="ArrayField">
+                <enabled type="BooleanField">
+                    <Required>Y</Required>
+                    <Default>1</Default>
+                </enabled>
+                <name type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[^\r\n]{1,512}$/u</Mask>
+                    <ValidationMessage>A group's name or distinguished name, on one line.</ValidationMessage>
+                    <Constraints>
+                        <check001>
+                            <ValidationMessage>This group has a row already.</ValidationMessage>
+                            <type>OPNsense\Base\Constraints\UniqueConstraint</type>
+                        </check001>
+                    </Constraints>
+                </name>
+                <alias type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^uid_[A-Za-z0-9_]{1,27}$/</Mask>
+                    <ValidationMessage>uid_ and letters, digits or _, 31 characters at most.</ValidationMessage>
+                </alias>
+                <description type="DescriptionField">
+                    <Required>N</Required>
+                </description>
+            </group>
+        </groups>
+        <users>
+            <user type="ArrayField">
+                <enabled type="BooleanField">
+                    <Required>Y</Required>
+                    <Default>1</Default>
+                </enabled>
+                <name type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[^\r\n,;"\[\]:|=+*?&lt;&gt;\\\/]{1,64}$/u</Mask>
+                    <ValidationMessage>A user's logon name, as the domain writes it.</ValidationMessage>
+                    <Constraints>
+                        <check001>
+                            <ValidationMessage>This user has a row already.</ValidationMessage>
+                            <type>OPNsense\Base\Constraints\UniqueConstraint</type>
+                        </check001>
+                    </Constraints>
+                </name>
+                <alias type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^uid_[A-Za-z0-9_]{1,27}$/</Mask>
+                    <ValidationMessage>uid_ and letters, digits or _, 31 characters at most.</ValidationMessage>
+                </alias>
+                <description type="DescriptionField">
+                    <Required>N</Required>
+                </description>
+            </user>
+        </users>
+    </items>
+</model>

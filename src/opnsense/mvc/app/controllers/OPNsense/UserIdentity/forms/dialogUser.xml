@@ -1,0 +1,28 @@
+<!--
+    SPDX-License-Identifier: BSD-2-Clause
+    Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
+-->
+<form>
+    <field>
+        <id>user.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+    </field>
+    <field>
+        <id>user.name</id>
+        <label>User</label>
+        <type>text</type>
+        <help>The user's logon name, as the domain controller writes it. Its addresses have a table of their own.</help>
+    </field>
+    <field>
+        <id>user.alias</id>
+        <label>Alias</label>
+        <type>text</type>
+        <help>The table's alias in Firewall: Aliases, for rules: uid_ and letters, digits or _, 31 characters at most. Left empty, one is made from the user's name when saved.</help>
+    </field>
+    <field>
+        <id>user.description</id>
+        <label>Description</label>
+        <type>text</type>
+    </field>
+</form>

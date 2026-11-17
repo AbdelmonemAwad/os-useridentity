@@ -45,8 +45,9 @@ def _int(text, default, low, high):
 
 
 def items(text):
-    """The entries of a list field: separated by commas, spaces or new lines, empty ones dropped."""
-    return [item for item in re.split(r'[\s,;]+', text or '') if item]
+    """The entries of a list field: separated by commas, semicolons or new lines, each stripped, empty
+    ones dropped - a user's name may hold a space."""
+    return [item.strip() for item in re.split(r'[,;\r\n]+', text or '') if item.strip()]
 
 
 def ipv4(text):

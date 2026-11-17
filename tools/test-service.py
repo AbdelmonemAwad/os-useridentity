@@ -7,8 +7,8 @@ with a port it may take and that is free, and only when syslog-ng takes its conf
 collector reading the lab's lines from a datagram socket as syslog-ng hands them over, counting each
 domain controller's lines and refusals, mapping, asking the directory in its own thread and writing
 the tables; the minute's run - the lifetime's end, the MAC check, the tables made again, the flush;
-and the alerts - a domain controller silent, the directory failing, an address newly shared - kept
-24 hours and 100 at most.
+the alerts - a domain controller silent, the directory failing, an address newly shared - kept 24
+hours and 100 at most; and what status.py gives the page.
 
     python3 tools/test-service.py"""
 import json
@@ -28,6 +28,7 @@ import engine                                                            # noqa:
 import expire                                                            # noqa: E402
 import outbox                                                            # noqa: E402
 import settings                                                          # noqa: E402
+import status                                                            # noqa: E402
 import syslogng                                                          # noqa: E402
 
 failures = 0
@@ -354,6 +355,46 @@ try:
           (outbox.prune(now + 200), len(os.listdir(outbox.OUTBOX)), os.path.exists(old)), (6, 100, False))
     check('the outbox: an alert of the same second gets a name of its own',
           outbox.alert('x', 's', 't', {}, now=now, log=False) != outbox.alert('x', 's', 't', {}, now=now, log=False), True)
+
+    # what the page shows
+    status.GROUPS, status.SOURCES, status.SOURCE, status.MINUTE = (collector.GROUPS, collector.SOURCES,
+                                                                   syslogng.STATUS, expire.STATUS)
+    engine.save({'map': {
+        '192.0.2.20': {'user': 'user2', 'domain': 'EXAMPLE', 'source': '192.0.2.10', 'first': now - 50, 'last': now - 10,
+                       'expires': now + 999, 'mac': '02:00:00:00:00:14', 'others': {'user1': now - 60, 'user9': now - 99999}},
+        '192.0.2.21': {'user': 'user1', 'source': '192.0.2.10', 'first': now, 'last': now, 'expires': now + 999,
+                       'mac': '', 'others': {}}}})
+    engine.write_json(collector.GROUPS, {'users': {'user1': {'in': ['g-staff']}},
+                                         'server': {'ok': True, 'error': '', 'at': now, 'chain': 'used'}})
+    engine.write_json(collector.SOURCES, {'since': now - 3600, 'senders': {
+        '192.0.2.10': {'last_line': now - 5, 'last_event': now - 7, 'late': 2.0, 'hostname': 'DC1.example.test',
+                       'lines': 9, 'accepted': 4, 'joined': 2, 'renewed': 2, 'changed': 0, 'other': {'4769': 3},
+                       'refused': {'stale': 1, 'computer': 1}},
+        '192.0.2.2': {'last_line': now - 60, 'lines': 1, 'refused': {'not a domain controller': 1}}}})
+    pfctl = os.path.join(TMP, 'pfctl')
+    with open(pfctl, 'w', encoding='utf-8') as handle:
+        handle.write('#!/bin/sh\nprintf \'%s\\n\' "--a-r--\tuid_grp_G_Staff" "\tAddresses:   1" "\tCleared:     now" '
+                     '"--a----\tuid_usr_user1" "\tAddresses:   2" "-pa----\tbogons" "\tAddresses:   1000"\n')
+    os.chmod(pfctl, 0o755)
+    shown = status.report(now=now, pidfile=os.path.join(TMP, 'none.pid'), pfctl=pfctl, project=os.path.join(TMP, 'xgs'))
+    check('status: on, the collector not running, no os-xgs-npu', (shown['enabled'], shown['running'], shown['project']),
+          (True, False, False))
+    check('status: two users on two addresses, one address shared - user9 seen too long ago to count',
+          shown['counts'], {'users': 2, 'addresses': 2, 'shared': 1})
+    check('status: each table, the addresses pf holds there, whether XGS: Settings cuts on it',
+          [(t['alias'], t['present'], t['entries'], t['cut']) for t in shown['tables']],
+          [('uid_grp_G_Staff', True, 1, True), ('uid_grp_Guests', False, None, False), ('uid_usr_user1', True, 2, False)])
+    check('status: the named domain controllers first, heard or not, then any other sender; stale apart from the rest',
+          [(s['address'], s['named'], s['stale'], s['refused'], s['other']) for s in shown['sources']],
+          [('192.0.2.10', True, 1, 1, 3), ('192.0.2.11', True, 0, 0, 0), ('192.0.2.2', False, 0, 1, 0)])
+    check('status: the last event, the directory, where the domain controllers send to',
+          (shown['last_event'], shown['ldap']['ok'], shown['ldap']['chosen'], shown['listen'], shown['port']),
+          (now - 7, True, 'Example directory', [{'interface': 'lan', 'address': '192.0.2.1'},
+                                                {'interface': 'opt1', 'address': '198.51.100.1'}], 514))
+    rows = status.mapped(engine.load(), {'user1': {'in': ['g-staff']}}, settings.read(), now)
+    check('the Users tab\'s rows: the group\'s name as its row gives it, who shares the address, whether the directory '
+          'answered for the user', [(r['address'], r['user'], r['groups'], r['shared'], r['known']) for r in rows],
+          [('192.0.2.20', 'user2', [], ['user1'], False), ('192.0.2.21', 'user1', ['G-Staff'], [], True)])
 finally:
     shutil.rmtree(TMP, ignore_errors=True)
 
