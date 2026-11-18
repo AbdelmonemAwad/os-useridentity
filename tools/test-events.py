@@ -173,6 +173,26 @@ try:
     got = events.parse(deep)
 except RecursionError:
     got = 'RecursionError raised, and the rest of its batch lost with it'
+# How deep json reads is the machine's: Python 3.14 stops at the end of its C stack, so the same line raised a
+# RecursionError on a workstation and was read whole on the CI's runner (2026-11-18). Either way it is refused and
+# nothing is raised; the RecursionError's own path is then taken by a json made to raise it
+check('a line nested 100,000 deep: refused, nothing raised, whether this machine\'s json reads it or not',
+      got in (('refused', 'unreadable'), ('refused', 'not a user')), True)
+real_loads = events.json.loads
+
+
+def too_deep(text):
+    raise RecursionError('maximum recursion depth exceeded while decoding a JSON array from a unicode string')
+
+
+line = edited(LOGON)            # before json is made to raise: edited() reads the line with it too
+events.json.loads = too_deep
+try:
+    got = events.parse(line)
+except RecursionError:
+    got = 'RecursionError raised, and the rest of its batch lost with it'
+finally:
+    events.json.loads = real_loads
 check('a line nested deeper than json reads: refused as unreadable, nothing raised', got, ('refused', 'unreadable'))
 
 framed = '<14>Nov 17 18:41:35 DC1.example.test MSWinEventLog 1 Security 1 ' + TICKET

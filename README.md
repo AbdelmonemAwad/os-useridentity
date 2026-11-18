@@ -141,7 +141,7 @@ NXLog's and the domain controller's behaviour, not this plugin's:
 
 On 2026-11-18, from this branch, away from an appliance - the checks, run under Python 3.14 and PHP 8.5:
 
-- **the domain controllers' lines** - `tools/test-events.py`, 102 checks: the 25 lines of phase 0's lab
+- **the domain controllers' lines** - `tools/test-events.py`, 103 checks: the 25 lines of phase 0's lab
   (A2, A6, A4) in `tools/fixtures/lab-events.txt`, every address made a documentation one, every name an
   example, each read as the lab saw it - tickets and network logons map, computer accounts, SYSTEM and
   the virtual accounts, a logon with no address, a logoff and a service ticket do not - and lines made
