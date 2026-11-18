@@ -370,6 +370,31 @@ try:
     logon_at('runas-user1', first + 480 * 60 + 10)
     check('user1 logs on again from 192.0.2.20: its table written again at once', pf.held.get('uid_usr_user1'),
           {'192.0.2.20'})
+
+    # Forget all while the collector runs: what the directory said, which it holds, goes with what groups.json
+    # held, and the user's next logon asks again - the minute's run, which makes the group tables from
+    # groups.json, never takes out what the collector put in (phase 1's lab, 2026-11-18: G-Staff's table
+    # emptied at each minute while u3 was mapped, and the Users tab showed u3 in no group)
+    engine.save({'map': {}})
+    second = first + 480 * 60 + 100
+    logon_at('runas-user1', second)
+    # every answer the directory owes taken in first: one of an earlier question, landing after Forget all,
+    # would write groups.json again and hide what is tested here
+    while wait_for(lambda: not service.directory.answers.empty(), 1.0):
+        service.answers(second + 1)
+    check('user1 mapped and its groups asked: G-Staff holds the address', pf.held.get('uid_grp_G_Staff'),
+          {'192.0.2.20'})
+    expire.run(settings.read(), now=second + 2, pf=collector.tables.Pf(run=pf), flush=True)
+    module.asked.clear()
+    logon_at('runas-user1', second + 10)
+    check('Forget all, then user1 again: the directory asked again, not answered from what the collector held',
+          wait_for(lambda: any('user1' in q for q in module.asked)), True)
+    wait_for(lambda: not service.directory.answers.empty())
+    service.answers(second + 12)
+    expire.run(settings.read(), now=second + 60, pf=collector.tables.Pf(run=pf), macs=lambda: {})
+    check('... and the minute\'s run after it: G-Staff still holds the address, and groups.json says why',
+          (pf.held.get('uid_grp_G_Staff'), engine.read_json(collector.GROUPS, {})['users'].get('user1', {}).get('in')),
+          ({'192.0.2.20'}, ['g-staff']))
     service.close()
     check('closed: the socket taken away', os.path.exists(sock_path), False)
     sender.close()

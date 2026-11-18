@@ -401,10 +401,17 @@ class Collector:
     def load(self):
         """The map, read under the lock. When the collector did not write it last - the minute's run,
         Forget all, or a collector before this one - the tables may have changed behind it: what it
-        wrote to each is forgotten, and each is made whole again at its next write."""
+        wrote to each is forgotten, and each is made whole again at its next write. What the directory
+        said of each user is read again from groups.json then too: Forget all empties it there, and the
+        minute's run makes the group tables from it - held in memory alone, it kept a user in a group's
+        table that the minute's run took out again each minute, the Users tab showing the user in no
+        group (phase 1's lab, 2026-11-18). A user it no longer knows is asked again at its next event."""
         state = engine.load()
         if state.get('writer') != self.token:
             self.written = {}
+            self.groups = engine.read_json(GROUPS, {})
+            if not isinstance(self.groups.get('users'), dict):
+                self.groups['users'] = {}
         return state
 
     def write_tables(self, state):
