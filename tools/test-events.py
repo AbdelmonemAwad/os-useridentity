@@ -241,20 +241,23 @@ VOLT = open(os.path.join(ROOT, 'src', 'opnsense', 'mvc', 'app', 'views', 'OPNsen
             encoding='utf-8').read()
 check('the page names the reason no pre-authentication', "'no pre-authentication':" in VOLT, True)
 
-# the NXLog CE configuration the page gives: each event's time sent in UTC with its zone, whatever the
-# domain controller's own, and the event's long text left out (the review's third and twelfth findings)
+# the NXLog CE configuration the page gives: each event's time sent as seconds since 1970, whatever the
+# domain controller's own zone, and the event's long text left out (the review's third and twelfth
+# findings). Not DateFormat: NXLog CE 3.2 refuses it and does not start (phase 1's lab, 2026-11-18)
 SNIPPET = VOLT.split('function nxlog(data)', 1)[1].split('].join', 1)[0]
-check('the page\'s NXLog configuration: DateFormat sends each time in UTC with its zone',
-      "'DateFormat YYYY-MM-DDThh:mm:ss.sUTC'" in SNIPPET, True)
-check('the page\'s NXLog configuration: the event\'s Message left out before to_json()',
-      "'    Exec    delete($Message); to_json();'" in SNIPPET, True)
-check('the page says what the DateFormat line does', 'DateFormat' in VOLT.split('<pre id="ui-nxlog"></pre>', 1)[1], True)
+check('the page\'s NXLog configuration: no DateFormat, which NXLog CE refuses', 'DateFormat' in SNIPPET, False)
+check('the page\'s NXLog configuration: each time made seconds since 1970, then the Message left out, then JSON',
+      "'    Exec    delete($Message); $EventTime = integer($EventTime) / 1000000; to_json();'" in SNIPPET, True)
+check('the page says what the integer() line does',
+      'integer($EventTime) / 1000000' in VOLT.split('<pre id="ui-nxlog"></pre>', 1)[1], True)
 os.environ['TZ'] = 'Asia/Dubai'
 time.tzset()
-sent = edited(TICKET, Message=None, EventTime='2026-11-17T18:41:33.123456Z')
+# what the lab's NXLog CE 3.2 sent with that line, the domain controller four hours ahead of UTC: EventTime
+# 1794962380 for an event at 00:39:40 UTC (its own clock said 04:39:40)
+sent = edited(TICKET, Message=None, EventTime=1794962380)
 found = events.parse(sent)
 check('a ticket as that configuration sends it, read in a firewall four hours ahead of UTC: its own time',
-      (found[0], found[1]['time'] if found[0] == 'event' else None), ('event', 1794940893.123456))
+      (found[0], found[1]['time'] if found[0] == 'event' else None), ('event', 1794962380.0))
 os.environ['TZ'] = 'UTC'
 time.tzset()
 longest = max(len(edited(line[2], Message=None)) for line in LAB.values())

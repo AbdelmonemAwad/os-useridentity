@@ -175,15 +175,16 @@
 
         /* NXLog CE's configuration for a domain controller (settled point 2), as phase 0's lab ran it:
            the two events that map, as JSON over TCP, to the first chosen interface's address - with each
-           event's time in UTC and its zone (DateFormat), so a domain controller in another time zone is
-           read right, and without the event's long text (delete($Message)), which nothing here reads and
-           which made half of each line. */
+           event's time sent as seconds since 1970 (integer() gives NXLog's own count, microseconds in
+           UTC), so a domain controller in another time zone is read right, and without the event's long
+           text (delete($Message)), which nothing here reads and which made half of each line. Not
+           DateFormat: NXLog CE 3.2 refuses it and does not start ("Invalid keyword: DateFormat", phase
+           1's lab); integer() it runs, and with the domain controller four hours ahead of UTC the
+           number it sent was still UTC's. */
         function nxlog(data) {
             const first = (data.listen || []).filter(function (l) { return l.address; })[0];
             const host = first ? first.address : "{{ lang._('the address of the firewall on the chosen interface') }}";
             $('#ui-nxlog').text([
-                'DateFormat YYYY-MM-DDThh:mm:ss.sUTC',
-                '',
                 '<Extension json>',
                 '    Module  xm_json',
                 '</Extension>',
@@ -192,7 +193,7 @@
                 '    <QueryXML>',
                 '        <QueryList><Query Id="0"><Select Path="Security">*[System[(EventID=4768 or EventID=4624)]]</Select></Query></QueryList>',
                 '    </QueryXML>',
-                '    Exec    delete($Message); to_json();',
+                '    Exec    delete($Message); $EventTime = integer($EventTime) / 1000000; to_json();',
                 '</Input>',
                 '<Output firewall>',
                 '    Module  om_tcp',
@@ -562,7 +563,7 @@
         </div>
         <pre id="ui-nxlog"></pre>
         <div class="text-muted ui-note">
-            {{ lang._('DateFormat makes NXLog CE write the time of each event in UTC with its zone, so the firewall reads it right whatever the time zone of the domain controller; without it the time is read in the zone of the firewall. delete($Message) leaves out the long text of each event, which nothing here reads, and keeps each line well under what one datagram to the collector can carry.') }}
+            {{ lang._('integer($EventTime) / 1000000 makes NXLog CE send the time of each event as seconds since 1970, in UTC, so the firewall reads it right whatever the time zone of the domain controller; without it the time is read in the zone of the firewall. delete($Message) leaves out the long text of each event, which nothing here reads, and keeps each line well under what one datagram to the collector can carry.') }}
         </div>
         <div class="text-muted ui-note">
             {{ lang._('The domain controllers keep their audit of Kerberos Authentication Service and of Logon for success, as Windows Server does by default. TLS from the domain controllers is not taken yet: the redirect, from their addresses alone, is what lets a line in.') }}

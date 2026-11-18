@@ -36,9 +36,9 @@ by default:
 - **the map** - each address on the network with the user its domain controller last saw logging on from
   it, from two events of the Windows Security log: 4768, a ticket-granting ticket issued, and 4624, a
   logon to the domain controller with the client's address. NXLog Community Edition on each domain
-  controller sends them as JSON over TCP; the page shows its configuration to copy - each event's time in
-  UTC with its zone (`DateFormat`), and the event's long text left out (`delete($Message)`), which
-  nothing here reads;
+  controller sends them as JSON over TCP; the page shows its configuration to copy - each event's time
+  sent as seconds since 1970, in UTC (`$EventTime = integer($EventTime) / 1000000`), and the event's long
+  text left out (`delete($Message)`), which nothing here reads;
 - **the groups** - the directory chosen in System: Access: Servers is asked which of the chosen groups
   each user is in: directly, or, with Nested groups on, through a group inside it, by Active
   Directory's in-chain rule;
@@ -148,11 +148,12 @@ On 2026-11-18, from this branch, away from an appliance - the checks, run under 
   the virtual accounts, a logon with no address, a logoff and a service ticket do not - and lines made
   from them: a refused ticket, a ticket with no pre-authentication, loopback, link-local, multicast,
   broadcast and unspecified addresses, IPv6, a name written `user@REALM` or `DOMAIN\name`, a syslog
-  header before the JSON, EventTime in two time zones, in ISO form and in UTC with its zone as the
-  page's NXLog configuration sends it, the stale window's edges, the firewall's and a domain
+  header before the JSON, EventTime in two time zones, in ISO form and as the seconds since 1970 the
+  page's NXLog configuration sends, the stale window's edges, the firewall's and a domain
   controller's addresses, Never map, Ignore users, a line nested deeper than json reads; and that
-  configuration on the page - DateFormat, delete($Message), the note saying what they do, the longest of
-  the lab's lines without its text well within one datagram;
+  configuration on the page - no DateFormat, which NXLog CE refuses, integer($EventTime) and
+  delete($Message), the note saying what they do, the longest of the lab's lines without its text well
+  within one datagram;
 - **the map and its tables** - `tools/test-engine.py`, 74 checks: join, renew, latest wins and the
   shared mark, an older event noted, the lifetime's end, the MAC check, the MAC forgotten when another
   user takes the address, the flush, the lab's A6 - three logons on one client in a row - played
