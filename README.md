@@ -102,10 +102,11 @@ NXLog's and the domain controller's behaviour, not this plugin's:
   to the runas user while another sat at its screen. Never map is for terminal servers and NAT inside
   the network;
 - **nothing says a user left** - a lock and a logoff send nothing that does, and a logoff event carries
-  no address. A mapping ends at the end of its lifetime - 480 minutes with no event about it, until the
-  lab's four-hour measurement says otherwise - when the address's MAC in the firewall's ARP or neighbour
-  table changes, checked every minute (behind a router the firewall sees no MAC), or when forgotten on
-  the page;
+  no address. A mapping ends at the end of its lifetime - 480 minutes with no event about it: in phase
+  0's four hours a signed-in user's domain controller wrote nothing about it for up to 55 minutes, idle
+  or busy, so a shorter one would drop users who are there - when the address's MAC in the firewall's ARP
+  or neighbour table changes, checked every minute (behind a router the firewall sees no MAC), or when
+  forgotten on the page;
 - **the groups** - asked when a user is first seen and again after 15 minutes, in a thread of their
   own, so a directory slow to answer never holds the events back; the user's addresses join its own
   table at once and its groups' when the directory answers. Windows Server 2025 refuses a simple bind
@@ -120,11 +121,9 @@ NXLog's and the domain controller's behaviour, not this plugin's:
 
 ## Not yet, and why
 
-- **on an appliance, and the page in a browser** - nothing of this plugin has run on an XGS or a plain
-  OPNsense yet; the lab must run phase 0's transport, latency and cut steps again with it (A2, A4, A7),
-  and the page has not been opened in a browser, in either theme or language.
-- **the lifetime** - 480 minutes is the settled starting point; the lab's four-hour measurement of how
-  often an idle and an active session renew (A5) is still owed, and the default follows it.
+- **the page in a browser** - everything below ran on two appliances and a plain OPNsense through the
+  page's own paths (its models, configd's actions, its Apply sequence); the page itself has not been
+  opened in a browser yet, in either theme or language.
 - **RADIUS accounting and the captive portal** - the plan's phase 2: os-freeradius's accounting files
   (phase 0's lab read them) and the portal's sessions as sources beside Active Directory.
 - **TLS from the domain controllers** - phase 2. Today the redirect from the named addresses is the
@@ -211,7 +210,58 @@ On 2026-11-18, from this branch, away from an appliance - the checks, run under 
   jQuery - a status, an error, no answer, the plugin off, the source not written, and each grid's
   formatters.
 
-Not tested: anything on an appliance or a plain OPNsense (above).
+On the appliances, the same day - the second XGS 3300 and the XGS 136 (OPNsense 26.7.9_1, os-xgs-npu at
+38a8cc9) and a plain OPNsense 26.7.7 in qemu, every step through the page's own paths (its models,
+configd's actions, the Apply sequence of `ServiceController`), config.xml and its backups put back as they
+were after each run. The test domain: Windows Server 2025 as its domain controller, a Windows 11 client
+joined to it, NXLog CE 3.2.2329 on the domain controller. The photographs are in
+`docs/images/measurements/`, each named `phase1-<part>-2026-11-18.png`:
+
+- **install, update, removal** - `install.sh` ended 0 in 4 to 8 s on each, the page at XGS 60 on both
+  appliances and under Firewall on the plain OPNsense; run again over the installed plugin from a newer
+  commit, as an update, it kept the settings, the map and the tables and started the collector again;
+  Apply with the plugin off took out the aliases, their tables and syslog-ng's source; `uninstall.sh`
+  ended 0 and left none of its paths (`up`, `update`, `down`, `136-up`, `136-apply`, `136-down`,
+  `vm-up`, `vm-apply`, `vm-down`);
+- **the way in** - Apply wrote syslog-ng's source on 127.0.0.1:5141 (`time-reopen(1)` accepted), one
+  redirect from the domain controller on the chosen interface to it beside os-xgs-npu's own on its
+  management port, the three aliases, and their tables in XGS: Settings' cut list. NXLog CE with the
+  configuration the page shows, put after the head of its own file, started and connected, and its lines
+  reached the collector through syslog-ng with none dropped - 489 in, 489 written (`nxlog`, `refuse`);
+- **the map** - u1's logon on the client: mapped, in G-Staff, the client in both its tables; u3's logon
+  there next: the address moved to u3, shown shared with u1, out of u1's table and still in G-Staff's -
+  u3 is in it through G-Sales; the minute's run after it changed no table. The same after Forget all,
+  the directory asked again (`map`, `map-again`);
+- **the directory** - the page's Test: u1 in G-Staff directly, u3 through the in-chain rule, by StartTLS
+  on 389 to the domain controller's name with the lab's CA in System: Trust, about 125 ms each (`map`);
+- **refused** - a line from another machine to the redirected port: no connection; one written to
+  syslog-ng's source on the firewall itself: refused, not a domain controller; a logon from the
+  firewall's own address (the plugin's LDAP binds): refused; a ticket issued with no pre-authentication -
+  a user set so on the domain controller for the test, PreAuthType 0 in its own log: refused, not
+  mapped; what NXLog CE kept while stopped, sent six minutes late: stale, not mapped (`refuse`,
+  `preauth`, `stale`);
+- **logon to let through** - ten runs, each after Forget all, a rule passing G-Staff's table: median
+  1.75 s, 1.69 to 3.04 s, from the logon's start to the client's first try let through, on the client's
+  own clock; before the directory's answer woke the collector, 3.02 s, 2.82 to 3.25 (`latency`,
+  `latency-before-wake`);
+- **the cut** - a session from another machine to the client through the 3300 left open; u1's logon put
+  the client in G-Staff's table, and at os-xgs-npu's next minute the client's open connections were cut,
+  one dropped in hardware first - the session's last line was the second before (`cut`);
+- **the MAC check** - another machine told the firewall alone, in three ARP replies, that the client's
+  address was its own: at the next minute the mapping ended and both tables emptied; the ARP entry made
+  again after (`mac`);
+- **the ports** - 22, 53, 80 and 443 refused for the redirect, with the reason; 514 taken (`ports`);
+- **a restart** - the 3300 restarted with the plugin on: the collector running 170 s after, syslog-ng's
+  source, the redirect, the aliases and the tables as the map held them; NXLog CE connected again by
+  itself 3 s after the collector, nothing it kept late enough to be stale (`boot`).
+
+Found by the lab and fixed in this branch: the configuration the page gave NXLog CE did not start it, CE
+having no `DateFormat` (bbe3feb); after Forget all a group's table was emptied at each minute while its
+user stayed mapped (58f99c9); a group's table was written up to a second after the directory's answer
+(1a43c82). `up`, `nxlog`, `map`, `map-again`, `refuse` and `latency-before-wake` ran at 58f99c9, the rest
+at 1a43c82.
+
+Not tested: the page in a browser (above).
 
 ## Installation
 
