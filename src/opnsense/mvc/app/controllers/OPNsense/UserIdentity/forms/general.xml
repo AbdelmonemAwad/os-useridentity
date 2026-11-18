@@ -1,0 +1,103 @@
+<!--
+    SPDX-License-Identifier: BSD-2-Clause
+    Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
+-->
+<form>
+    <field>
+        <id>useridentity.general.enabled</id>
+        <label>Enable</label>
+        <type>checkbox</type>
+        <help>Map each address to its user from the domain controllers' logon events, and fill the tables of the group and user rows. Off by default: nothing is mapped until domain controllers and groups are named. Off, every mapping is forgotten and the plugin's aliases leave Firewall: Aliases - switched off instead where a rule or a setting still names one.</help>
+    </field>
+    <field>
+        <id>useridentity.general.domain_controllers</id>
+        <label>Domain controllers</label>
+        <type>select_multiple</type>
+        <style>tokenize</style>
+        <allownew>true</allownew>
+        <help>The IPv4 addresses of the domain controllers that send their logon events, with NXLog CE (Sources shows its configuration). Only these are let in: pf redirects their port to syslog-ng on 127.0.0.1, and a line from any other address is never read.</help>
+    </field>
+    <field>
+        <id>useridentity.general.interfaces</id>
+        <label>Interfaces</label>
+        <type>select_multiple</type>
+        <help>Where the domain controllers' events come in.</help>
+    </field>
+    <field>
+        <id>useridentity.general.port</id>
+        <label>Port</label>
+        <type>text</type>
+        <help>The TCP port the domain controllers send to, on the firewall's addresses. Not one the firewall itself serves - SSH, DNS, the web GUI on 80, 443 or its own port: the domain controllers would no longer reach that service.</help>
+    </field>
+    <field>
+        <id>useridentity.general.ldap_server</id>
+        <label>Groups from</label>
+        <type>dropdown</type>
+        <help>The LDAP entry of System: Access: Servers asked which groups a user is in. Active Directory refuses a bind in the clear: StartTLS or SSL, with the domain's certificate authority in System: Trust and the domain controller named as its certificate names it.</help>
+    </field>
+    <field>
+        <id>useridentity.general.nested</id>
+        <label>Nested groups (Active Directory)</label>
+        <type>checkbox</type>
+        <help>A user in a group that is inside a chosen group counts as in it: Active Directory is asked by its in-chain rule, one question a group. A server that does not know the rule is asked memberOf alone.</help>
+    </field>
+    <field>
+        <id>useridentity.general.lifetime</id>
+        <label>Mapping lifetime (minutes)</label>
+        <type>text</type>
+        <help>How long an address stays mapped with no event about it. A domain controller says nothing when a user logs off or locks the screen, so this is what ends a mapping, besides another user's logon from the same address. An idle session renews itself: the network logons it makes keep coming.</help>
+    </field>
+    <field>
+        <id>useridentity.general.mac_check</id>
+        <label>Drop when the address's MAC changes</label>
+        <type>checkbox</type>
+        <help>Every minute, an address whose MAC in the firewall's ARP or neighbour table is not the one it had leaves the map: another device has it. Behind a router the firewall sees no MAC, and only the lifetime ends a mapping.</help>
+    </field>
+    <field>
+        <id>useridentity.general.stale</id>
+        <label>Stale after (minutes)</label>
+        <type>text</type>
+        <help>An event older than this when it arrives neither maps nor renews: NXLog CE sends again what it held while stopped. Counted as stale on Sources. The events' times are read in the firewall's time zone: the domain controllers must keep the same zone, and a close clock.</help>
+    </field>
+    <field>
+        <id>useridentity.general.never_map</id>
+        <label>Never map</label>
+        <type>select_multiple</type>
+        <style>tokenize</style>
+        <allownew>true</allownew>
+        <help>Addresses and networks never mapped to a user: terminal servers, NAT inside the network, servers that log on to the domain controllers as a user. The firewall's own addresses and the domain controllers' never are.</help>
+    </field>
+    <field>
+        <id>useridentity.general.ignore_users</id>
+        <label>Ignore users</label>
+        <type>select_multiple</type>
+        <style>tokenize</style>
+        <allownew>true</allownew>
+        <help>Users never mapped: service accounts, administrators logging on to servers.</help>
+    </field>
+    <field>
+        <id>useridentity.general.log_names</id>
+        <label>Log user names</label>
+        <type>checkbox</type>
+        <help>The system log says how many addresses were mapped, changed user or left. On, it names each address and its user, and so do the alerts.</help>
+    </field>
+    <field>
+        <id>useridentity.general.history_days</id>
+        <label>Keep history (days)</label>
+        <type>text</type>
+        <help>Each mapping made, changed or ended, kept a file a day in /var/db/os-useridentity/history for this many days. 0: none is kept, only the live map.</help>
+    </field>
+    <field>
+        <id>useridentity.general.alert_silent</id>
+        <label>Alert when a domain controller is silent (minutes)</label>
+        <type>text</type>
+        <help>0: no alert. An alert is a file in /var/db/os-useridentity/alerts, in os-xgs-npu's form, for os-netreport to send; the directory failing and an address newly shared are alerted too.</help>
+    </field>
+    <field>
+        <id>useridentity.general.local_port</id>
+        <label>Local port</label>
+        <type>text</type>
+        <advanced>true</advanced>
+        <help>The port of syslog-ng's source on 127.0.0.1 that the domain controllers' lines are redirected to; 5140 is os-xgs-npu's. It is written only when no other program holds it: a source that cannot be bound would stop syslog-ng, and every log with it.</help>
+    </field>
+</form>

@@ -1,0 +1,14 @@
+<!--
+    SPDX-License-Identifier: BSD-2-Clause
+    Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
+-->
+<acl>
+    <page-firewall-useridentity>
+        <name>Firewall: User Identity</name>
+        <description>Allow access to user identity: the addresses mapped to users from domain logons, the aliases it fills, and its settings</description>
+        <patterns>
+            <pattern>ui/useridentity/*</pattern>
+            <pattern>api/useridentity/*</pattern>
+        </patterns>
+    </page-firewall-useridentity>
+</acl>

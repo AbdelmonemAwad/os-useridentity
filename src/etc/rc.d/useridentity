@@ -1,0 +1,125 @@
+#!/bin/sh
+# Copyright (C) 2026 Abdelmonem Awad <eg2@live.com>. BSD 2-Clause License.
+
+# PROVIDE: useridentity
+# REQUIRE: LOGIN
+# KEYWORD: shutdown
+
+#
+# User Identity's collector: collector.py run, supervised by daemon(8), which starts it again ten
+# seconds after it ends unasked. It reads the lines syslog-ng hands it on /var/run/useridentity.sock and
+# keeps the map; it stands in no connection's way.
+#
+# Whether it runs is config.xml's setting, enabled - off by default - read by
+# plugins.inc.d/useridentity.inc at boot and by the page's Apply. configd calls this script with the
+# "one" prefix, so rc.conf's switch is not asked: one place decides, not two that can disagree.
+#
+# rc.subr is given no pidfile and no procname: the process daemon(8) runs is python, and a procname
+# would match a sibling plugin's python too. What is running is read from the two pidfiles here, and
+# believed only when the process behind each is ours.
+
+. /etc/rc.subr
+
+name="useridentity"
+rcvar=useridentity_enable
+
+load_rc_config $name
+
+: ${useridentity_enable:="NO"}
+
+useridentity_script="/usr/local/opnsense/scripts/useridentity/collector.py"
+useridentity_pid="/var/run/useridentity.pid"
+useridentity_super="/var/run/useridentity.daemon.pid"
+useridentity_socket="/var/run/useridentity.sock"
+
+start_cmd="useridentity_start"
+stop_cmd="useridentity_stop"
+status_cmd="useridentity_status"
+
+# The pid in the file $1 when it is alive and is ours - the collector, or daemon(8) supervising it.
+# daemon(8) writes a pid with no newline, so read's status is not asked: the value decides.
+useridentity_pidof()
+{
+	local _pid _junk
+
+	[ -s "$1" ] || return 0
+	read _pid _junk < "$1" 2> /dev/null
+	case "${_pid}" in
+	''|*[!0-9]*)	return 0 ;;
+	esac
+	[ "${_pid}" -gt 1 ] 2> /dev/null || return 0
+	kill -0 "${_pid}" 2> /dev/null || return 0
+	case "$(ps -ww -o args= -p "${_pid}" 2> /dev/null)" in
+	*"${useridentity_script} run"*|"daemon: ${name}["*)	echo "${_pid}" ;;
+	esac
+	return 0
+}
+
+useridentity_start()
+{
+	local _pid
+
+	_pid=$(useridentity_pidof "${useridentity_super}")
+	[ -n "${_pid}" ] || _pid=$(useridentity_pidof "${useridentity_pid}")
+	if [ -n "${_pid}" ]; then
+		echo "${name} is already running as pid ${_pid}."
+		return 0
+	fi
+	if [ ! -x "${useridentity_script}" ]; then
+		warn "${name}: ${useridentity_script} is missing"
+		return 1
+	fi
+	install -d -o root -g wheel -m 0750 /var/db/os-useridentity || return 1
+	echo "Starting ${name}."
+	/usr/sbin/daemon -f -R 10 -t "${name}" -P "${useridentity_super}" -p "${useridentity_pid}" \
+	    "${useridentity_script}" run
+}
+
+useridentity_stop()
+{
+	local _super _pid _left _waited _p
+
+	_super=$(useridentity_pidof "${useridentity_super}")
+	_pid=$(useridentity_pidof "${useridentity_pid}")
+	if [ -z "${_super}${_pid}" ]; then
+		rm -f "${useridentity_socket}"
+		echo "${name} is not running."
+		return 0
+	fi
+	echo "Stopping ${name}."
+	# daemon(8) passes SIGTERM on to the collector, which saves what it counted and ends
+	kill -TERM ${_super:-${_pid}} 2> /dev/null
+	_waited=0
+	while :; do
+		_left=
+		for _p in ${_super} ${_pid}; do
+			kill -0 "${_p}" 2> /dev/null && _left="${_left} ${_p}"
+		done
+		[ -n "${_left}" ] || break
+		if [ ${_waited} -ge 50 ]; then
+			warn "${name}: pid${_left} would not stop within 10 seconds"
+			kill -KILL ${_left} 2> /dev/null
+			break
+		fi
+		sleep 0.2
+		_waited=$((_waited + 1))
+	done
+	rm -f "${useridentity_pid}" "${useridentity_super}" "${useridentity_socket}"
+	return 0
+}
+
+# OPNsense reads this line, looking for "not running" before "is running".
+useridentity_status()
+{
+	local _pid
+
+	_pid=$(useridentity_pidof "${useridentity_pid}")
+	if [ -n "${_pid}" ]; then
+		echo "${name} is running as pid ${_pid}."
+		return 0
+	fi
+	echo "${name} is not running."
+	return 1
+}
+
+run_rc_command "$1"

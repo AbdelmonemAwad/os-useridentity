@@ -1,6 +1,6 @@
 # Working on this
 
-A plugin, planned: who is behind an address: logins read from Active Directory, RADIUS, LDAP and the captive portal, kept as pf tables per user and per group, for rules, traffic priority and web policies.
+A plugin, written, not released: who is behind an address - logons read from the Active Directory domain controllers, the directory asked for each user's groups, kept as pf tables per group and per user. Its first part is the engine and the Active Directory source; RADIUS accounting and the captive portal, TLS from the domain controllers and a rule's gateway by user come later.
 
 It is one part of the [os-xgs-npu](https://github.com/AbdelmonemAwad/os-xgs-npu) project, and works the same way.
 

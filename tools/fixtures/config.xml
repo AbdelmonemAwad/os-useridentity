@@ -1,0 +1,129 @@
+<?xml version="1.0"?>
+<!--
+    SPDX-License-Identifier: BSD-2-Clause
+    Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
+
+    A config.xml as the tests need it: User Identity's settings, an LDAP entry of System: Access:
+    Servers (its bind password a made-up word), the interfaces, the aliases - the plugin's and the
+    owner's - and os-xgs-npu's cut list. Every address a documentation one, every name an example.
+-->
+<opnsense>
+  <system>
+    <hostname>fw</hostname>
+    <authserver>
+      <refid>5f0000000000a</refid>
+      <type>radius</type>
+      <name>RADIUS one</name>
+      <host>192.0.2.40</host>
+    </authserver>
+    <authserver>
+      <refid>5f0000000000b</refid>
+      <type>ldap</type>
+      <name>Example directory</name>
+      <host>dc1.example.test</host>
+      <ldap_port>389</ldap_port>
+      <ldap_urltype>StartTLS</ldap_urltype>
+      <ldap_protver>3</ldap_protver>
+      <ldap_scope>subtree</ldap_scope>
+      <ldap_basedn>DC=example,DC=test</ldap_basedn>
+      <ldap_authcn>CN=Users,DC=example,DC=test;OU=Staff,DC=example,DC=test</ldap_authcn>
+      <ldap_extended_query>objectClass=user</ldap_extended_query>
+      <ldap_attr_user>sAMAccountName</ldap_attr_user>
+      <ldap_binddn>CN=svc-bind,CN=Users,DC=example,DC=test</ldap_binddn>
+      <ldap_bindpw>not-a-real-one</ldap_bindpw>
+      <ldap_timeout>10</ldap_timeout>
+    </authserver>
+  </system>
+  <interfaces>
+    <wan>
+      <if>igb0</if>
+      <enable>1</enable>
+      <ipaddr>dhcp</ipaddr>
+    </wan>
+    <lan>
+      <if>igb1</if>
+      <enable>1</enable>
+      <ipaddr>192.0.2.1</ipaddr>
+      <subnet>24</subnet>
+    </lan>
+    <opt1>
+      <if>igb2</if>
+      <enable>1</enable>
+      <ipaddr>198.51.100.1</ipaddr>
+      <subnet>24</subnet>
+    </opt1>
+  </interfaces>
+  <OPNsense>
+    <UserIdentity version="1.0.0">
+      <general>
+        <enabled>1</enabled>
+        <ldap_server>Example directory</ldap_server>
+        <domain_controllers>192.0.2.10,192.0.2.11,dc3.example.test,2001:db8::10</domain_controllers>
+        <interfaces>lan,opt1</interfaces>
+        <port>514</port>
+        <local_port>5141</local_port>
+        <lifetime>480</lifetime>
+        <mac_check>1</mac_check>
+        <stale>5</stale>
+        <nested>1</nested>
+        <never_map>198.51.100.50,2001:db8:1::/48,not-a-network</never_map>
+        <ignore_users>svc-backup,SVC-Scan</ignore_users>
+        <log_names>0</log_names>
+        <history_days>0</history_days>
+        <alert_silent>30</alert_silent>
+      </general>
+      <groups>
+        <group uuid="11111111-0000-4000-8000-000000000001">
+          <enabled>1</enabled>
+          <name>G-Staff</name>
+          <alias>uid_grp_G_Staff</alias>
+          <description>everyone on staff</description>
+        </group>
+        <group uuid="11111111-0000-4000-8000-000000000002">
+          <enabled>0</enabled>
+          <name>CN=Guests,OU=Groups,DC=example,DC=test</name>
+          <alias>uid_grp_Guests</alias>
+          <description/>
+        </group>
+      </groups>
+      <users>
+        <user uuid="22222222-0000-4000-8000-000000000001">
+          <enabled>1</enabled>
+          <name>user1</name>
+          <alias>uid_usr_user1</alias>
+          <description/>
+        </user>
+      </users>
+    </UserIdentity>
+    <Firewall>
+      <Alias version="1.0.1">
+        <aliases>
+          <alias uuid="33333333-0000-4000-8000-000000000001">
+            <enabled>1</enabled>
+            <name>uid_grp_G_Staff</name>
+            <type>external</type>
+            <description>User Identity: group G-Staff</description>
+          </alias>
+          <alias uuid="33333333-0000-4000-8000-000000000002">
+            <enabled>1</enabled>
+            <name>uid_usr_user1</name>
+            <type>external</type>
+            <description>User Identity: user user1</description>
+          </alias>
+          <alias uuid="33333333-0000-4000-8000-000000000003">
+            <enabled>1</enabled>
+            <name>office</name>
+            <type>host</type>
+            <content>192.0.2.30</content>
+            <description>the owner's own</description>
+          </alias>
+        </aliases>
+      </Alias>
+    </Firewall>
+    <XGS version="1.3.0">
+      <general>
+        <cut_lists>33333333-0000-4000-8000-000000000003,33333333-0000-4000-8000-000000000001</cut_lists>
+      </general>
+    </XGS>
+  </OPNsense>
+</opnsense>

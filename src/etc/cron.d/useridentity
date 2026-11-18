@@ -1,0 +1,10 @@
+#-
+# SPDX-License-Identifier: BSD-2-Clause
+# Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
+#
+# Every minute (the plan's cron item): the mappings whose lifetime ended taken out, the MAC check, and
+# every table of User Identity's made again from the map - whether the collector runs or not - with
+# the history and the alerts kept as long as they should be (expire.py). Off, it finds an empty map and
+# exits.
+
+* * * * * root /usr/local/opnsense/scripts/useridentity/expire.py > /dev/null 2>&1
