@@ -13,6 +13,7 @@ hours and 100 at most; and what status.py gives the page.
     python3 tools/test-service.py"""
 import json
 import os
+import select
 import shutil
 import socket
 import stat
@@ -228,6 +229,11 @@ try:
           (len(names), True))
     changes = service.receive(got, LAB['ticket-user1'][0])
     check('the directory asked in its own thread', wait_for(lambda: not service.directory.answers.empty()), True)
+    # its answer wakes the collector's select at once, not at the next line or the end of the second (phase 1's
+    # lab: a group's table a second late)
+    check('the answer wakes the collector: its pipe readable, then read away',
+          (bool(select.select([service.directory.wake_r], [], [], 2.0)[0]),
+           service.directory.woken() or bool(select.select([service.directory.wake_r], [], [], 0)[0])), (True, False))
     service.answers(LAB['ticket-user1'][0])
     when, source, message = LAB['logon-user1']
     sender.sendto(('%s %s' % (source, message)).encode(), sock_path)

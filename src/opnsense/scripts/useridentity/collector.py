@@ -140,6 +140,26 @@ class Asker(threading.Thread):
         self.failed_at = 0.0
         self.waiting = set()
         self.lock = threading.Lock()
+        # a byte written after each answer wakes the collector's select at once: with only its socket to
+        # wait on, an answer waited for the next line or the end of the second (phase 1's lab, 2026-11-18:
+        # logon to let through by a group's table, median 3.02 s, where a user's table needs no answer)
+        self.wake_r, self.wake_w = os.pipe()
+        os.set_blocking(self.wake_r, False)
+        os.set_blocking(self.wake_w, False)
+
+    def wake(self):
+        try:
+            os.write(self.wake_w, b'.')
+        except OSError:
+            pass                    # the pipe full is the collector awake already; closed is the end
+
+    def woken(self):
+        """What the answers wrote to the pipe, read away."""
+        try:
+            while os.read(self.wake_r, 512):
+                pass
+        except OSError:
+            pass
 
     def ask(self, user):
         with self.lock:
@@ -166,6 +186,7 @@ class Asker(threading.Thread):
                 continue
             try:
                 self.answers.put(self.answer(item))
+                self.wake()
             finally:
                 with self.lock:
                     self.waiting.discard(item)
@@ -290,6 +311,8 @@ class Collector:
                 os.unlink(self.socket_path)
             except OSError:
                 pass
+        # the pipe is left open: the directory's thread may still be in a question, and a closed descriptor's
+        # number given to another file would take its byte; the process ends here
         self.directory.stop()
 
     def refresh(self, now):
@@ -464,13 +487,15 @@ class Collector:
         last_save = last_prune = 0.0
         while running:
             try:
-                ready, _, _ = select.select([self.sock], [], [], 1.0)
+                ready, _, _ = select.select([self.sock, self.directory.wake_r], [], [], 1.0)
             except InterruptedError:
                 continue
             now = time.time()
             try:
+                if self.directory.wake_r in ready:
+                    self.directory.woken()
                 self.refresh(now)
-                datagrams = self.drain() if ready else []
+                datagrams = self.drain() if self.sock in ready else []
                 if datagrams:
                     self.receive(datagrams, now)
                 self.answers(now)
