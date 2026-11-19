@@ -12,7 +12,7 @@
             config.xml by element name, so the names are not free.
         -->
         <general>
-            <!-- Off by default: nothing is mapped until domain controllers and groups are named. -->
+            <!-- Off by default: nothing is mapped until a source is named and groups or users are. -->
             <enabled type="BooleanField">
                 <Required>Y</Required>
                 <Default>0</Default>
@@ -43,6 +43,16 @@
                 <MaximumValue>65535</MaximumValue>
                 <ValidationMessage>A port from 1 to 65535.</ValidationMessage>
             </port>
+            <!-- The sources beside the domain controllers (the plan's top-03), off until the owner turns
+                 them on: the accounting os-freeradius writes, and the captive portal's sessions. -->
+            <radius type="BooleanField">
+                <Required>Y</Required>
+                <Default>0</Default>
+            </radius>
+            <portal type="BooleanField">
+                <Required>Y</Required>
+                <Default>0</Default>
+            </portal>
             <!-- syslog-ng's source on 127.0.0.1 (phase 0's A0: 5140 is os-xgs-npu's, 5141 free) -->
             <local_port type="IntegerField">
                 <Required>Y</Required>

@@ -3,8 +3,9 @@
  # Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
  #
  # Firewall: User Identity (XGS: User Identity when os-xgs-npu is installed) - which user each address
- # belongs to, from the domain controllers' logon events, the tables of groups and users that follow
- # from it, the domain controllers heard, and the settings.
+ # belongs to, from the domain controllers' logon events, RADIUS accounting and the captive portal's
+ # sessions - the latest wins, and two sources that clash over an address are shown - the tables of
+ # groups and users that follow from it, the sources heard, and the settings.
  #}
 
 <style>
@@ -87,7 +88,17 @@
             'firewall': "{{ lang._('an address of the firewall') }}",
             'domain controller': "{{ lang._('an address of a domain controller') }}",
             'never map': "{{ lang._('Never map') }}",
-            'ignored': "{{ lang._('Ignore users') }}"
+            'ignored': "{{ lang._('Ignore users') }}",
+            'mac authentication': "{{ lang._('MAC authentication') }}",
+            'voucher': "{{ lang._('a voucher') }}"
+        };
+        /* the sources beside the domain controllers say 'not a user' of a name that is nobody's */
+        const nobody = "{{ lang._('names no user') }}";
+        /* which source said it (engine.py's kinds) */
+        const kinds = {
+            'ad': "{{ lang._('Active Directory') }}",
+            'radius': "{{ lang._('RADIUS') }}",
+            'portal': "{{ lang._('Captive Portal') }}"
         };
         let counts = {};
 
@@ -121,8 +132,9 @@
                 state = 'bad';
                 sub = "{{ lang._('collector not running') }}";
             } else {
-                state = 'ok';
-                sub = count(c.addresses) + ' ' + "{{ lang._('addresses') }}" + ' · ' + count(c.shared) + ' ' + "{{ lang._('shared') }}";
+                state = c.clashes ? 'warn' : 'ok';
+                sub = count(c.addresses) + ' ' + "{{ lang._('addresses') }}" + ' · ' + count(c.shared) + ' ' + "{{ lang._('shared') }}" +
+                    (c.clashes ? ' · ' + count(c.clashes) + ' ' + "{{ lang._('clashes between sources') }}" : '');
             }
             $cards.append(card(state, 'fa-users', "{{ lang._('Users present') }}", data.enabled ? count(c.users) : "{{ lang._('off') }}", sub));
 
@@ -142,20 +154,47 @@
             }
             $cards.append(card(data.enabled ? lstate : '', 'fa-sitemap', "{{ lang._('Groups') }}", count(groups.length), lsub));
 
-            const named = (data.sources || []).filter(function (s) { return s.named; });
+            /* the sources chosen and those heard: each domain controller named, RADIUS accounting, the
+               captive portal - each heard once there is something to read */
+            const named = (data.sources || []).filter(function (s) { return s.kind === 'ad' && s.named; });
             const heard = named.filter(function (s) { return s.last_line; });
             const source = data.source || {};
-            let sstate = '', ssub = '';
-            if (data.enabled) {
-                if (!source.written) {
-                    sstate = 'bad';
-                    ssub = "{{ lang._('not receiving') }}" + (source.reason ? ': ' + source.reason : '');
+            const radius = data.radius || {}, portal = data.portal || {};
+            let total = named.length, got = heard.length, parts = [], sstate = '';
+            if (named.length) {
+                parts.push(source.written ? "{{ lang._('receiving on port') }}" + ' ' + data.port :
+                    "{{ lang._('not receiving') }}" + (source.reason ? ': ' + source.reason : ''));
+            }
+            if (radius.on) {
+                total++;
+                if (radius.found) {
+                    got++;
                 } else {
-                    sstate = named.length && heard.length === named.length ? 'ok' : 'warn';
-                    ssub = "{{ lang._('receiving on port') }}" + ' ' + data.port;
+                    parts.push("{{ lang._('no RADIUS accounting to read') }}");
                 }
             }
-            $cards.append(card(sstate, 'fa-server', "{{ lang._('Domain controllers heard') }}", heard.length + ' / ' + named.length, ssub));
+            if (portal.on) {
+                total++;
+                if (!portal.zones) {
+                    parts.push("{{ lang._('no captive portal zone switched on') }}");
+                } else if (portal.found && !portal.error) {
+                    got++;
+                } else {
+                    parts.push(portal.error ? "{{ lang._('the portal\'s sessions cannot be read') }}" + ': ' + portal.error :
+                        "{{ lang._('no captive portal session yet') }}");
+                }
+            }
+            if (data.enabled) {
+                if (!total) {
+                    sstate = 'warn';
+                    parts.push("{{ lang._('no source chosen') }}");
+                } else if (named.length && !source.written) {
+                    sstate = 'bad';
+                } else {
+                    sstate = got === total ? 'ok' : 'warn';
+                }
+            }
+            $cards.append(card(sstate, 'fa-server', "{{ lang._('Sources heard') }}", got + ' / ' + total, parts.join(' · ')));
 
             let stale = 0, refused = 0;
             $.each(data.sources || [], function (i, s) {
@@ -169,7 +208,7 @@
             $('#ui-project').toggle(!!data.enabled && !!data.project);
             $('#ui-alone').toggle(!!data.enabled && !data.project);
             $('#ui-source').text(plain("{{ lang._('Not receiving: syslog-ng\'s source is not written.') }}" +
-                (source.reason ? ' ' + source.reason : ''))).toggle(!!data.enabled && !source.written);
+                (source.reason ? ' ' + source.reason : ''))).toggle(!!data.enabled && named.length > 0 && !source.written);
             nxlog(data);
         }
 
@@ -233,6 +272,15 @@
             return t && t.present ? count(t.entries) : '-';
         }
 
+        /* a source as the Users and Sources tabs name it: its kind, then who - the domain controller or
+           the RADIUS client, or the portal's zone by its description */
+        function sourceName(kind, source, name) {
+            if (kind === 'portal') {
+                return (kinds.portal) + ' · ' + (name || ("{{ lang._('Zone') }}" + ' ' + source));
+            }
+            return (kinds[kind] || kind) + (source ? ' · <code>' + source + '</code>' : '');
+        }
+
         /* The grids' rows are built by the API controllers; the API escapes what it returns, so
            nothing here escapes it again. */
         $('#grid-map').UIBootgrid({
@@ -252,7 +300,18 @@
                         }
                         return row.groups || '-';
                     },
+                    source: function (column, row) {
+                        return sourceName(row.kind, row.source, row.source_name);
+                    },
+                    /* the other users within the lifetime: shared with them, or - one of them from
+                       another source - a clash between the sources, each named */
                     shared: function (column, row) {
+                        if (row.clash) {
+                            return '<span class="text-danger">' + "{{ lang._('clash with') }}" + ' ' +
+                                $.map(row.others || [], function (o) {
+                                    return o.user + ' (' + (kinds[o.kind] || o.kind) + ')';
+                                }).join(', ') + '</span>';
+                        }
                         return row.shared ? '<span class="text-warning">' + "{{ lang._('shared with') }}" + ' ' + row.shared + '</span>' : '-';
                     }
                 }
@@ -294,7 +353,13 @@
             options: {
                 selection: false,
                 formatters: {
+                    kind: function (column, row) {
+                        return kinds[row.kind] || row.kind;
+                    },
                     sender: function (column, row) {
+                        if (row.kind === 'portal') {
+                            return "{{ lang._('Zone') }}" + ' ' + row.address;
+                        }
                         return '<span dir="ltr">' + row.address + '</span>' + (row.named ? '' :
                             ' <span class="text-warning">' + "{{ lang._('not named') }}" + '</span>');
                     },
@@ -309,7 +374,8 @@
                     },
                     reasons: function (column, row) {
                         const parts = $.map(row.reasons || [], function (r) {
-                            return (reasons[r.reason] || r.reason) + ' ' + count(r.count);
+                            const said = row.kind !== 'ad' && r.reason === 'not a user' ? nobody : reasons[r.reason];
+                            return (said || r.reason) + ' ' + count(r.count);
                         });
                         return parts.length ? parts.join(' · ') : '-';
                     }
@@ -377,7 +443,7 @@
             const $button = $(this);
             BootstrapDialog.confirm({
                 title: "{{ lang._('Forget every mapping') }}",
-                message: "{{ lang._('Every address is taken out of the map and of the tables now. The next logon or network logon of each user maps it again.') }}",
+                message: "{{ lang._('Every address is taken out of the map and of the tables now. The next logon or network logon of each user maps it again; a captive portal session still open within half a minute, a RADIUS session at its next Interim-Update.') }}",
                 type: BootstrapDialog.TYPE_WARNING,
                 btnOKLabel: "{{ lang._('Forget') }}",
                 callback: function (yes) {
@@ -421,7 +487,7 @@
             });
         });
 
-        cards_wait('#ui-cards', ["{{ lang._('Users present') }}", "{{ lang._('Groups') }}", "{{ lang._('Domain controllers heard') }}",
+        cards_wait('#ui-cards', ["{{ lang._('Users present') }}", "{{ lang._('Groups') }}", "{{ lang._('Sources heard') }}",
             "{{ lang._('Last event') }}"]);
         refresh();
         keep_tab();
@@ -452,7 +518,7 @@
                     <th data-column-id="address" data-formatter="mono" data-type="string" data-identifier="true">{{ lang._('Address') }}</th>
                     <th data-column-id="user" data-type="string">{{ lang._('User') }}</th>
                     <th data-column-id="groups" data-formatter="groups" data-type="string">{{ lang._('Groups') }}</th>
-                    <th data-column-id="source" data-formatter="mono" data-type="string">{{ lang._('Domain controller') }}</th>
+                    <th data-column-id="source" data-formatter="source" data-type="string">{{ lang._('Source') }}</th>
                     <th data-column-id="first" data-formatter="time" data-type="numeric">{{ lang._('Since') }}</th>
                     <th data-column-id="last" data-formatter="time" data-type="numeric">{{ lang._('Last event') }}</th>
                     <th data-column-id="expires" data-formatter="time" data-type="numeric">{{ lang._('Until') }}</th>
@@ -465,7 +531,7 @@
         </table>
         <div class="text-muted ui-note clearfix">
             <button id="flushAct" class="btn btn-default btn-xs pull-right" type="button">{{ lang._('Forget every mapping') }}</button>
-            {{ lang._('Each address with the user its domain controller last saw logging on from it. The latest logon wins: an address another user logged on from within the lifetime is shown as shared - a terminal server, or a runas on a client while someone sits at its screen. A domain controller says nothing at a logoff: a mapping ends at the end of its lifetime, when another device takes the address, or when forgotten here.') }}
+            {{ lang._('Each address with the user a source last saw on it: a domain controller, RADIUS accounting or the captive portal. The latest wins: an address another user was seen on within the lifetime is shown as shared - a terminal server, or a runas on a client while someone sits at its screen - and as a clash when two sources gave it to two users. A RADIUS Stop and the end of a portal session end a mapping at once; a domain controller says nothing at a logoff: its mappings end at the end of their lifetime, when another device takes the address, or when forgotten here.') }}
         </div>
         <div class="xgs-head ui-head">{{ lang._('A table for a user') }}</div>
         <table id="grid-users" class="table table-condensed table-hover table-striped" data-editDialog="DialogUser">
@@ -538,14 +604,17 @@
         <table id="grid-sources" class="table table-condensed table-hover table-striped table-responsive">
             <thead>
                 <tr>
-                    <th data-column-id="address" data-formatter="sender" data-type="string" data-identifier="true">{{ lang._('Domain controller') }}</th>
+                    <th data-column-id="order" data-type="numeric" data-identifier="true" data-visible="false">{{ lang._('ID') }}</th>
+                    <th data-column-id="kind" data-formatter="kind" data-type="string">{{ lang._('Source') }}</th>
+                    <th data-column-id="address" data-formatter="sender" data-type="string">{{ lang._('Sender') }}</th>
                     <th data-column-id="hostname" data-type="string">{{ lang._('Name') }}</th>
-                    <th data-column-id="last_line" data-formatter="time" data-type="numeric">{{ lang._('Last line') }}</th>
+                    <th data-column-id="last_line" data-formatter="time" data-type="numeric">{{ lang._('Last heard') }}</th>
                     <th data-column-id="last_event" data-formatter="time" data-type="numeric">{{ lang._('Last event') }}</th>
                     <th data-column-id="late" data-formatter="late" data-type="numeric" data-width="7em">{{ lang._('Late') }}</th>
                     <th data-column-id="accepted" data-formatter="number" data-type="numeric" data-width="7em">{{ lang._('Taken') }}</th>
                     <th data-column-id="joined" data-formatter="number" data-type="numeric" data-width="7em">{{ lang._('Mapped') }}</th>
                     <th data-column-id="renewed" data-formatter="number" data-type="numeric" data-width="7em">{{ lang._('Renewed') }}</th>
+                    <th data-column-id="ended" data-formatter="number" data-type="numeric" data-width="7em">{{ lang._('Ended') }}</th>
                     <th data-column-id="stale" data-formatter="number" data-type="numeric" data-width="7em">{{ lang._('Stale') }}</th>
                     <th data-column-id="reasons" data-formatter="reasons" data-type="string" data-sortable="false">{{ lang._('Refused') }}</th>
                     <th data-column-id="other" data-formatter="number" data-type="numeric" data-width="7em">{{ lang._('Other events') }}</th>
@@ -556,6 +625,9 @@
         </table>
         <div class="text-muted ui-note">
             {{ lang._('Since the collector started: the lines each sender sent, the events taken - a ticket issued (4768) or a logon to the domain controller with an address (4624) - those that mapped an address or renewed one, those older than Stale after when they came, those refused and why, and the other events counted and set aside. Late: how long after it happened the last event came. Lines are counted, never kept.') }}
+        </div>
+        <div class="text-muted ui-note">
+            {{ lang._('RADIUS: each client of os-freeradius whose accounting was read - its records, the addresses a Start or an Interim-Update mapped or renewed, those a Stop ended, those older than the mapping lifetime when read (stale), those refused and why; Accounting-On and Accounting-Off, which end every session of their NAS, among the others. Captive Portal: each zone switched on - the sessions it held, the addresses they mapped and those their end took out, and those refused and why.') }}
         </div>
         <div class="xgs-head ui-head">{{ lang._('NXLog CE on each domain controller') }}</div>
         <div class="text-muted ui-note">
