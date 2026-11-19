@@ -33,13 +33,21 @@
         <id>useridentity.general.radius</id>
         <label>RADIUS accounting</label>
         <type>checkbox</type>
-        <help>Map the address of each RADIUS session to its user, from the accounting os-freeradius writes as each request comes: a Start maps its Framed-IP-Address, an Interim-Update renews it, a Stop takes it out. A NAS - or another RADIUS server that forwards its accounting - must be a client of Services: FreeRADIUS. A NAS that sends no Interim-Update leaves the mapping to the end of its lifetime, even while the session goes on.</help>
+        <help>Map the address of each RADIUS session to its user, from the accounting os-freeradius writes as each request comes, for the RADIUS clients named below alone: a Start maps its Framed-IP-Address, an Interim-Update renews it, a Stop takes it out. A NAS - or another RADIUS server that forwards its accounting - must be a client of Services: FreeRADIUS. A NAS that sends no Interim-Update leaves the mapping to the end of its lifetime, even while the session goes on. With a directory chosen in Groups from, a name written with a realm or a domain that is not the directory's maps nothing: its groups would be another user's.</help>
+    </field>
+    <field>
+        <id>useridentity.general.radius_clients</id>
+        <label>RADIUS clients</label>
+        <type>select_multiple</type>
+        <style>tokenize</style>
+        <allownew>true</allownew>
+        <help>The RADIUS clients whose accounting may map, each by its address as Services: FreeRADIUS sees it - a NAS, or a RADIUS server that forwards its accounting. A record from any other is refused; none named, none maps. Name only a client whose User-Name is the name FreeRADIUS authenticated: with EAP - PEAP, TTLS or TLS, most 802.1X - a NAS reports the outer name the device itself gives, which its user may set to anyone's, unless FreeRADIUS checks it against the name it authenticated or returns that one to the NAS in the Access-Accept; os-freeradius as installed does neither. A client taken out of this list: what it mapped ends at the next minute.</help>
     </field>
     <field>
         <id>useridentity.general.portal</id>
         <label>Captive portal sessions</label>
         <type>checkbox</type>
-        <help>Map the address of each session of the captive portal to the user that logged on, from the logon to the logout or the portal's own timeout - read every two seconds from the portal's database. The sessions of allowed addresses, of vouchers and of zones with no login map nothing.</help>
+        <help>Map the address of each session of the captive portal to the user that logged on, from the logon to the logout or the portal's own timeout - read every two seconds from the portal's database. The sessions of allowed addresses, of vouchers and of zones with no login map nothing; with a directory chosen in Groups from, neither do those another server let in - the Local Database among them: their users' groups would be those of a user of the same name in the directory.</help>
     </field>
     <field>
         <id>useridentity.general.ldap_server</id>

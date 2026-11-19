@@ -10,10 +10,11 @@
  * What is checked: the four cards for the status the page is given - the users present with the
  * addresses shared and those two sources clash over; the sources heard, each domain controller named,
  * RADIUS accounting and the captive portal, and what keeps each from being heard (syslog-ng's source not
- * written, no accounting to read, no zone switched on, no session yet, a database that cannot be read,
- * no source chosen); the warning about syslog-ng's source only where domain controllers are named; a
- * status that cannot be read - and the grids' formatters: each mapping's source, a clash and a share;
- * each sender's source and name, and its refusals in the words of its source.
+ * written, no RADIUS client named, no accounting to read, no zone switched on, no session yet, a database
+ * that cannot be read, no source chosen); the warning about syslog-ng's source only where domain
+ * controllers are named; a status that cannot be read - and the grids' formatters: each mapping's
+ * source, a clash and a share; each sender's source and name, and its refusals in the words of its
+ * source - a client not named, a user of another directory among them.
  *
  *   node tools/test-page.js
  */
@@ -190,7 +191,7 @@ const BASE = {
     sources: [DC, { kind: 'ad', named: true, address: '192.0.2.11' },
         { kind: 'radius', named: true, address: '192.0.2.40', last_line: 1795100001, last_event: 1795100001, refused: 1 },
         { kind: 'portal', named: true, address: '0', last_line: 1795100002 }],
-    radius: { on: true, found: true, sessions: 1 },
+    radius: { on: true, found: true, sessions: 1, clients: 1 },
     portal: { on: true, found: true, zones: 1, sessions: 2, error: '' },
     listen: [{ interface: 'lan', address: '192.0.2.1' }],
     last_event: 1795100001
@@ -218,10 +219,13 @@ check('no clash: the users card green, no word of clashes', got[0], ['ok', 'User
 check('the domain controllers alone, all heard: green', got[2], ['ok', 'Sources heard', '1 / 1', 'receiving on port 514']);
 
 run = page(status({ sources: [], source: { written: false, reason: 'no domain controller named' },
-    radius: { on: true, found: false }, portal: { on: false } }));
+    radius: { on: true, found: false, clients: 1 }, portal: { on: false } }));
 got = cards(run);
 check('RADIUS alone, no accounting to read: said, amber', got[2],
     ['warn', 'Sources heard', '0 / 1', 'no RADIUS accounting to read']);
+run = page(status({ sources: [], radius: { on: true, found: true, clients: 0 }, portal: { on: false } }));
+check('RADIUS on, no client named: said, amber - nothing of RADIUS maps until one is', cards(run)[2],
+    ['warn', 'Sources heard', '0 / 1', 'no RADIUS client named']);
 check('no domain controller named: no warning about syslog-ng\'s source', run.found['#ui-source'].shown, false);
 
 run = page(status({ sources: [DC], source: { written: false, reason: 'port 5141 on 127.0.0.1 is in use by nginx' },
@@ -282,6 +286,11 @@ check('Sources: the refusals in the words of their source - nobody is no domain 
         sources.reasons({}, { kind: 'portal', reasons: [{ reason: 'voucher', count: 1 }] }),
         sources.reasons({}, { kind: 'portal', reasons: [] })],
     ['not a domain user 2 · computer account 1', 'names no user 1 · MAC authentication 3 · something new 1', 'a voucher 1', '-']);
+check('Sources: a client not named, and a user of another directory - from RADIUS and from the portal',
+    [sources.reasons({}, { kind: 'radius', reasons: [{ reason: 'not a named client', count: 4 },
+        { reason: 'another directory', count: 1 }] }),
+        sources.reasons({}, { kind: 'portal', reasons: [{ reason: 'another directory', count: 2 }] })],
+    ['not a RADIUS client named 4 · a user of another directory 1', 'a user of another directory 2']);
 
 console.log(failures ? failures + ' of ' + checks + ' checks failed' : checks + ' checks passed');
 process.exit(failures ? 1 : 0);

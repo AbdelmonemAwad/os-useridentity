@@ -531,5 +531,13 @@ check('a logon later than the other source\'s last event: the portal\'s user tak
       (state['map']['192.0.2.95']['user'], state['map']['192.0.2.95']['kind'], state['map']['192.0.2.95']['via']),
       ('user3', 'portal', {'u1': 'ad'}))
 
+VOLT = open(os.path.join(ROOT, 'src', 'opnsense', 'mvc', 'app', 'views', 'OPNsense', 'UserIdentity', 'index.volt'),
+            encoding='utf-8').read()
+NAMED = VOLT.split('const reasons = {', 1)[1].split('};', 1)[0]
+check('every reason RADIUS and the portal refuse for is one the page names in its words',
+      [reason for reason in ('unreadable', 'no time', 'not a user', 'computer', 'mac authentication', 'no address',
+                             'not a client address', 'not a named client', 'another directory', 'voucher')
+       if "'%s':" % reason not in NAMED], [])
+
 print('%d of %d checks failed' % (failures, checks) if failures else '%d checks passed' % checks)
 sys.exit(1 if failures else 0)

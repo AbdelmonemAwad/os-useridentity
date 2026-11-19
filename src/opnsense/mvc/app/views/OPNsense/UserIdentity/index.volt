@@ -90,7 +90,9 @@
             'never map': "{{ lang._('Never map') }}",
             'ignored': "{{ lang._('Ignore users') }}",
             'mac authentication': "{{ lang._('MAC authentication') }}",
-            'voucher': "{{ lang._('a voucher') }}"
+            'voucher': "{{ lang._('a voucher') }}",
+            'not a named client': "{{ lang._('not a RADIUS client named') }}",
+            'another directory': "{{ lang._('a user of another directory') }}"
         };
         /* the sources beside the domain controllers say 'not a user' of a name that is nobody's */
         const nobody = "{{ lang._('names no user') }}";
@@ -167,7 +169,9 @@
             }
             if (radius.on) {
                 total++;
-                if (radius.found) {
+                if (!radius.clients) {
+                    parts.push("{{ lang._('no RADIUS client named') }}");
+                } else if (radius.found) {
                     got++;
                 } else {
                     parts.push("{{ lang._('no RADIUS accounting to read') }}");
@@ -531,7 +535,7 @@
         </table>
         <div class="text-muted ui-note clearfix">
             <button id="flushAct" class="btn btn-default btn-xs pull-right" type="button">{{ lang._('Forget every mapping') }}</button>
-            {{ lang._('Each address with the user a source last saw on it: a domain controller, RADIUS accounting or the captive portal. The latest wins: an address another user was seen on within the lifetime is shown as shared - a terminal server, or a runas on a client while someone sits at its screen - and as a clash when two sources gave it to two users. A RADIUS Stop and the end of a portal session end a mapping at once; a domain controller says nothing at a logoff: its mappings end at the end of their lifetime, when another device takes the address, or when forgotten here.') }}
+            {{ lang._('Each address with the user a source last saw on it: a domain controller, RADIUS accounting or the captive portal. The latest logon wins: an address another user was seen on within the lifetime is shown as shared - a terminal server, or a runas on a client while someone sits at its screen - and as a clash when two sources gave it to two users. A RADIUS or portal session that lost its address to a later logon does not take it back; a clash that lasts - one account that many share on one source, each user\'s own on the other - ends with that account in Ignore users. A RADIUS Stop and the end of a portal session end a mapping at once, unless another session of the same user holds the address or it was renewed since; a domain controller says nothing at a logoff: its mappings end at the end of their lifetime, when another device takes the address, or when forgotten here.') }}
         </div>
         <div class="xgs-head ui-head">{{ lang._('A table for a user') }}</div>
         <table id="grid-users" class="table table-condensed table-hover table-striped" data-editDialog="DialogUser">
@@ -627,7 +631,7 @@
             {{ lang._('Since the collector started: the lines each sender sent, the events taken - a ticket issued (4768) or a logon to the domain controller with an address (4624) - those that mapped an address or renewed one, those older than Stale after when they came, those refused and why, and the other events counted and set aside. Late: how long after it happened the last event came. Lines are counted, never kept.') }}
         </div>
         <div class="text-muted ui-note">
-            {{ lang._('RADIUS: each client of os-freeradius whose accounting was read - its records, the addresses a Start or an Interim-Update mapped or renewed, those a Stop ended, those older than the mapping lifetime when read (stale), those refused and why; Accounting-On and Accounting-Off, which end every session of their NAS, among the others. Captive Portal: each zone switched on - the sessions it held, the addresses they mapped and those their end took out, and those refused and why.') }}
+            {{ lang._('RADIUS: each client named in Settings, and any other of os-freeradius whose accounting was read and refused - its records, the addresses a Start or an Interim-Update mapped or renewed, those a Stop ended, those older than the mapping lifetime when read (stale), those refused and why; Accounting-On and Accounting-Off among the others, each ending the sessions of the NAS it names - every session of its client when it names none. Captive Portal: each zone switched on - the sessions it held, the addresses they mapped and those their end took out, and those refused and why.') }}
         </div>
         <div class="xgs-head ui-head">{{ lang._('NXLog CE on each domain controller') }}</div>
         <div class="text-muted ui-note">

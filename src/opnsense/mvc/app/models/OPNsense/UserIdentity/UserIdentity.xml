@@ -49,6 +49,17 @@
                 <Required>Y</Required>
                 <Default>0</Default>
             </radius>
+            <!-- The RADIUS clients whose accounting may map, each by its address - the name of the
+                 directory FreeRADIUS writes its records in: none named, none maps. The name a NAS
+                 reports with EAP is the device's own unless FreeRADIUS checks it, so the owner names
+                 only the clients whose names are the ones FreeRADIUS authenticated. -->
+            <radius_clients type="NetworkField">
+                <Required>N</Required>
+                <AsList>Y</AsList>
+                <NetMaskAllowed>N</NetMaskAllowed>
+                <WildcardEnabled>N</WildcardEnabled>
+                <ValidationMessage>Addresses of RADIUS clients, one each.</ValidationMessage>
+            </radius_clients>
             <portal type="BooleanField">
                 <Required>Y</Required>
                 <Default>0</Default>
