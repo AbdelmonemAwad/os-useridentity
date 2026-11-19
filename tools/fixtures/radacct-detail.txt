@@ -1,0 +1,33 @@
+Tue Nov 17 21:21:45 2026
+	User-Name = "u1"
+	Acct-Status-Type = Start
+	Acct-Session-Id = "p0-a9-1"
+	Framed-IP-Address = 192.0.2.77
+	NAS-IP-Address = 127.0.0.1
+	Calling-Station-Id = "02-00-00-00-a9-01"
+	Event-Timestamp = "Nov 17 2026 21:21:45 UTC"
+	Acct-Unique-Session-Id = "38950487608e4f75190df8111cf4a78a"
+	Timestamp = 1794950505
+
+Tue Nov 17 21:21:47 2026
+	User-Name = "u1"
+	Acct-Status-Type = Interim-Update
+	Acct-Session-Id = "p0-a9-1"
+	Framed-IP-Address = 192.0.2.77
+	NAS-IP-Address = 127.0.0.1
+	Calling-Station-Id = "02-00-00-00-a9-01"
+	Event-Timestamp = "Nov 17 2026 21:21:47 UTC"
+	Acct-Unique-Session-Id = "38950487608e4f75190df8111cf4a78a"
+	Timestamp = 1794950507
+
+Tue Nov 17 21:21:49 2026
+	User-Name = "u1"
+	Acct-Status-Type = Stop
+	Acct-Session-Id = "p0-a9-1"
+	Framed-IP-Address = 192.0.2.77
+	NAS-IP-Address = 127.0.0.1
+	Calling-Station-Id = "02-00-00-00-a9-01"
+	Event-Timestamp = "Nov 17 2026 21:21:49 UTC"
+	Acct-Unique-Session-Id = "38950487608e4f75190df8111cf4a78a"
+	Timestamp = 1794950509
+
