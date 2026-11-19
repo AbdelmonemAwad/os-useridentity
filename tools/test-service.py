@@ -16,6 +16,7 @@ import os
 import select
 import shutil
 import socket
+import sqlite3
 import stat
 import sys
 import tempfile
@@ -31,6 +32,7 @@ import outbox                                                            # noqa:
 import settings                                                          # noqa: E402
 import status                                                            # noqa: E402
 import syslogng                                                          # noqa: E402
+from sources import portal, radius                                       # noqa: E402
 
 failures = 0
 checks = 0
@@ -405,6 +407,182 @@ try:
     check('closed: the socket taken away', os.path.exists(sock_path), False)
     sender.close()
 
+    # the sources beside the domain controllers: RADIUS accounting and the captive portal's sessions
+    radius.RADACCT, radius.STATE = os.path.join(TMP, 'radacct'), state + '/radius.json'
+    portal.DB = os.path.join(TMP, 'captiveportal.sqlite')
+    status.GROUPS, status.SOURCES, status.SOURCE, status.MINUTE = (collector.GROUPS, collector.SOURCES,
+                                                                   syslogng.STATUS, expire.STATUS)
+    plain = open(config, encoding='utf-8').read()
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(plain.replace('<radius>0</radius>', '<radius>1</radius>').replace('<portal>0</portal>',
+                                                                                     '<portal>1</portal>'))
+    os.utime(config, (time.time() + 30, time.time() + 30))
+    engine.save({'map': {}})
+    engine.write_json(collector.GROUPS, {'users': {}})
+    if os.path.exists(outbox.OUTBOX):
+        shutil.rmtree(outbox.OUTBOX)
+    pf = FakePf()
+    module = directory()
+    now = 1795100000.0
+    both = collector.Collector(socket_path=os.path.join(TMP, 'both.sock'), pf=collector.tables.Pf(run=pf), ldap3=module,
+                               now=now, addresses=lambda: ({'192.0.2.1'}, {'192.0.2.255'}))
+    check('RADIUS accounting and the portal\'s sessions on, read from config.xml', (both.conf['radius'], both.conf['portal']),
+          (True, True))
+    detail = os.path.join(radius.RADACCT, '192.0.2.40', 'detail-20261119')
+    os.makedirs(os.path.dirname(detail))
+
+    def acct(status_type, user, address, stamp, session='s1'):
+        with open(detail, 'a', encoding='utf-8') as handle:
+            handle.write('Thu Nov 19 10:00:00 2026\n\tUser-Name = "%s"\n\tAcct-Status-Type = %s\n' % (user, status_type) +
+                         ('\tFramed-IP-Address = %s\n' % address if address else '') +
+                         '\tNAS-IP-Address = 192.0.2.40\n\tNAS-Identifier = "ap1"\n\tAcct-Unique-Session-Id = "%s"\n'
+                         '\tTimestamp = %d\n\n' % (session, stamp))
+        os.utime(detail, (stamp, stamp))
+
+    acct('Start', 'user1', '192.0.2.77', int(now) - 1)
+    check('RADIUS: a Start read - user1 mapped on its Framed-IP-Address', both.poll(now), [('joined', '192.0.2.77', 'user1')])
+    entry = engine.load()['map']['192.0.2.77']
+    check('... by RADIUS, from its client, by a Start', (entry['kind'], entry['source'], entry['event']),
+          ('radius', '192.0.2.40', 'Start'))
+    check('... its own table at once', pf.held.get('uid_usr_user1'), {'192.0.2.77'})
+    check('... the directory asked of its groups, whichever source mapped it',
+          wait_for(lambda: not both.directory.answers.empty()), True)
+    both.answers(now)
+    check('... its group\'s table once the directory answered', pf.held.get('uid_grp_G_Staff'), {'192.0.2.77'})
+    acct('Interim-Update', 'user1', '192.0.2.77', int(now) + 60)
+    check('RADIUS: an Interim-Update renews', both.poll(now + 61), [('renewed', '192.0.2.77', 'user1')])
+    acct('Stop', 'user1', None, int(now) + 120)
+    check('RADIUS: read once a second at most', both.poll(now + 61.5), [])
+    check('RADIUS: a Stop - the address leaves the map, and its tables at once',
+          (both.poll(now + 121), pf.held.get('uid_usr_user1'), pf.held.get('uid_grp_G_Staff')),
+          ([('left', '192.0.2.77', ('user1', 'logoff'))], set(), set()))
+    acct('Start', 'host/pc1.example.test', '192.0.2.78', int(now) + 130, session='s2')
+    acct('Start', 'user1', '192.0.2.1', int(now) + 131, session='s3')
+    acct('Start', 'user4', '192.0.2.79', int(now) - 480 * 60 - 100, session='s4')
+    both.poll(now + 132)
+    client = both.sources.kinds['radius']['192.0.2.40']
+    check('RADIUS: its client\'s counts - records, taken, mapped, renewed, ended, each refusal by its reason - and its NAS',
+          (client['lines'], client['accepted'], client['joined'], client['renewed'], client['ended'], client['refused'],
+           client['hostname']), (6, 2, 1, 1, 1, {'computer': 1, 'firewall': 1, 'stale': 1}, 'ap1'))
+    check('RADIUS: the sessions open kept for the page', both.sources.open['radius'], 1)
+    check('RADIUS: what was read kept in radius.json', os.path.basename(list(engine.read_json(radius.STATE, {})['files'])[0]),
+          'detail-20261119')
+
+    # the captive portal
+    def sessions(rows, roaming=()):
+        if os.path.exists(portal.DB):
+            os.unlink(portal.DB)
+        connection = sqlite3.connect(portal.DB)
+        connection.executescript('create table cp_clients (zoneid int, sessionid varchar, authenticated_via varchar, '
+                                 'username varchar, ip_address varchar, mac_address varchar, created number, '
+                                 'deleted integer default (0));'
+                                 'create table cp_client_ips (zoneid int, sessionid varchar, ip_address varchar);')
+        connection.executemany('insert into cp_clients values (?, ?, ?, ?, ?, ?, ?, ?)', rows)
+        connection.executemany('insert into cp_client_ips values (?, ?, ?)', roaming)
+        connection.commit()
+        connection.close()
+
+    login = now + 200
+    sessions([(0, 'a', 'Example directory', 'user2', '192.0.2.88', '', login, 0),
+              (0, 'v', 'Vouchers', 'k3xq9p', '192.0.2.92', '', login, 0),
+              (1, 'o', 'Example directory', 'user5', '192.0.2.93', '', login, 0)])
+    check('portal: a session read - user2 mapped on its address; a voucher\'s and a zone switched off\'s, not',
+          both.poll(login + 1), [('joined', '192.0.2.88', 'user2')])
+    entry = engine.load()['map']['192.0.2.88']
+    check('... by the portal, its zone', (entry['kind'], entry['source'], entry['event']), ('portal', '0', 'logon'))
+    check('portal: read every two seconds', both.poll(login + 2), [])
+    check('portal: read again, the same sessions - nothing to do', both.poll(login + 3.5), [])
+
+    # a domain controller's event for another user on the same address, later: latest wins, the clash shown
+    def logon_line(name, stamp, address=None):
+        arrival, source, message = LAB[name]
+        found = json.loads(message[message.find('{'):])
+        found['EventTime'] = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(stamp))
+        if address:
+            found['IpAddress'] = '::ffff:' + address
+        return ('%s %s' % (source, json.dumps(found))).encode()
+
+    changes = both.receive([logon_line('runas-user1', login + 10, '192.0.2.88')], login + 11)
+    check('a domain controller maps the address to user1 later: latest wins, the address shared', changes,
+          [('changed', '192.0.2.88', ('user2', 'user1')), ('shared', '192.0.2.88', ['user1', 'user2'])])
+    alerts = [json.load(open(os.path.join(outbox.OUTBOX, a), encoding='utf-8')) for a in sorted(os.listdir(outbox.OUTBOX))]
+    check('the alert: the two sources named - and, Log user names on since above, the users',
+          (alerts[-1]['kind'], alerts[-1]['facts'], alerts[-1]['text']),
+          ('address-shared', {'address': '192.0.2.88', 'sources': ['ad', 'portal'], 'users': ['user1', 'user2']},
+           'user1, user2 were mapped to 192.0.2.88 by ad, portal within the mapping lifetime: the latest holds it.'))
+    collector.Collector.after(types.SimpleNamespace(conf=dict(both.conf, log_names=False)),
+                              [('shared', '192.0.2.88', ['user1', 'user2'])], login + 11, {'192.0.2.88': ['ad', 'portal']})
+    newest = max(os.listdir(outbox.OUTBOX), key=lambda a: os.stat(os.path.join(outbox.OUTBOX, a)).st_mtime_ns)
+    found = json.load(open(os.path.join(outbox.OUTBOX, newest), encoding='utf-8'))
+    check('the alert with Log user names off: the sources named, no user', (found['facts'], found['text']),
+          ({'address': '192.0.2.88', 'sources': ['ad', 'portal']},
+           'Two sources (ad, portal) mapped 192.0.2.88 to two users within the mapping lifetime: the latest holds it.'))
+    rows = status.mapped(engine.load(), {}, settings.read(), login + 12)
+    row = [r for r in rows if r['address'] == '192.0.2.88'][0]
+    check('the Users tab: the address user1\'s by a domain controller, a clash with user2 of the portal',
+          (row['user'], row['kind'], row['source'], row['clash'], row['others'], row['shared']),
+          ('user1', 'ad', '192.0.2.10', True, [{'user': 'user2', 'kind': 'portal'}], ['user2']))
+    check('portal: the session does not take the address back', both.poll(login + 20), [])
+    both.sources.save()
+    shown = status.report(now=login + 21, pidfile=os.path.join(TMP, 'none.pid'), pfctl='/nonexistent',
+                          project=os.path.join(TMP, 'xgs'))
+    check('status: the clash counted, RADIUS and the portal on and read, their sessions open',
+          (shown['counts']['clashes'], shown['radius'], shown['portal']),
+          (1, {'on': True, 'found': True, 'sessions': 1},
+           {'on': True, 'found': True, 'zones': 1, 'sessions': 1, 'error': ''}))
+    check('status: Sources - the domain controllers, then the RADIUS client, then the portal\'s zone by its description',
+          [(s['kind'], s['address'], s['hostname'], s['accepted'], s['ended']) for s in shown['sources']],
+          [('ad', '192.0.2.10', 'DC1.example.test', 1, 0), ('ad', '192.0.2.11', '', 0, 0), ('ad', '192.0.2.2', '', 0, 0),
+           ('radius', '192.0.2.40', 'ap1', 2, 1), ('portal', '0', 'Guests', 1, 0)])
+    zone = [s for s in shown['sources'] if s['kind'] == 'portal'][0]
+    check('status: the zone\'s refusals by reason - the zone switched off\'s session not read at all',
+          (zone['lines'], zone['reasons']), (2, {'voucher': 1}))
+
+    # the session ends: the user that lost the address is no longer among the others - no clash left
+    sessions([])
+    check('portal: user2\'s session ends - user1 keeps the address, the clash gone',
+          (both.poll(login + 30), engine.load()['map']['192.0.2.88']['user'], engine.load()['map']['192.0.2.88']['others']),
+          ([], 'user1', {}))
+    sessions([(0, 'b', 'Example directory', 'user3', '192.0.2.89', '', login + 40, 0)],
+             roaming=[(0, 'b', '2001:db8::89')])
+    check('portal: a session with a roaming address - both mapped', both.poll(login + 41),
+          [('joined', '192.0.2.89', 'user3'), ('joined', '2001:db8::89', 'user3')])
+    sessions([(0, 'b', 'Example directory', 'user3', '192.0.2.89', '', login + 40, 1)])
+    check('portal: the logout - both leave at the next reading',
+          both.poll(login + 43), [('left', '192.0.2.89', ('user3', 'logoff')), ('left', '2001:db8::89', ('user3', 'logoff'))])
+    check('portal: the zone\'s endings counted', both.sources.kinds['portal']['0']['ended'], 2)
+    sessions([(0, 'c', 'Example directory', 'user6', '192.0.2.90', '', login + 50, 0)])
+    both.poll(login + 51)
+
+    # a collector started again while a session ended: its mapping taken out at the first reading
+    sessions([])
+    again = collector.Collector(socket_path=os.path.join(TMP, 'again.sock'), pf=collector.tables.Pf(run=pf), ldap3=module,
+                                now=login + 60, addresses=lambda: ({'192.0.2.1'}, {'192.0.2.255'}))
+    check('a new collector, a session gone meanwhile: taken out at its first reading', again.poll(login + 61),
+          [('left', '192.0.2.90', ('user6', 'logoff'))])
+    check('... RADIUS read on from where the one before stopped: its sessions open kept, no record read twice',
+          sorted(again.radius.sessions), ['s3'])
+
+    # a source switched off: RADIUS's sessions forgotten, and its mappings taken out at the minute
+    acct('Start', 'user7', '192.0.2.97', int(login) + 70, session='s7')
+    again.poll(login + 71)
+    check('RADIUS: user7 mapped', engine.load()['map']['192.0.2.97']['kind'], 'radius')
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(plain.replace('<portal>0</portal>', '<portal>1</portal>'))
+    os.utime(config, (time.time() + 40, time.time() + 40))
+    again.refresh(login + 72)
+    check('RADIUS switched off: read no more, its sessions forgotten', (again.conf['radius'], again.radius.sessions,
+                                                                        again.poll(login + 80)), (False, {}, []))
+    out = expire.run(settings.read(), now=login + 90, pf=collector.tables.Pf(run=pf), macs=lambda: {})
+    check('... the minute\'s run takes out the mapping it gave, the portal\'s and the domain controllers\' kept',
+          (out['off'], sorted((w, e['kind']) for w, e in engine.load()['map'].items())),
+          (1, [('192.0.2.88', 'ad')]))
+    again.close()
+    both.close()
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(plain)
+    os.utime(config, (time.time() + 50, time.time() + 50))
+
     # the minute's run
     pf = FakePf()
     now = 1794990000.0
@@ -497,8 +675,8 @@ try:
     shown = status.report(now=now, pidfile=os.path.join(TMP, 'none.pid'), pfctl=pfctl, project=os.path.join(TMP, 'xgs'))
     check('status: on, the collector not running, no os-xgs-npu', (shown['enabled'], shown['running'], shown['project']),
           (True, False, False))
-    check('status: two users on two addresses, one address shared - user9 seen too long ago to count',
-          shown['counts'], {'users': 2, 'addresses': 2, 'shared': 1})
+    check('status: two users on two addresses, one address shared - user9 seen too long ago to count; no clash',
+          shown['counts'], {'users': 2, 'addresses': 2, 'shared': 1, 'clashes': 0})
     check('status: each table, the addresses pf holds there, whether XGS: Settings cuts on it',
           [(t['alias'], t['present'], t['entries'], t['cut']) for t in shown['tables']],
           [('uid_grp_G_Staff', True, 1, True), ('uid_grp_Guests', False, None, False), ('uid_usr_user1', True, 2, False)])

@@ -25,14 +25,15 @@ rmdir /usr/local/opnsense/mvc/app/models/OPNsense/UserIdentity/Menu /usr/local/o
 rm -f /var/lib/php/tmp/opnsense_menu_cache.xml /tmp/opnsense_menu_cache.xml
 
 # Nor syslog-ng's source, should pre-deinstall not have taken it away; nor what Python compiles beside
-# a script it imports, which would keep the scripts' directory; nor the map, the counts, the history
-# and the alerts in /var/db; nor the pidfiles and the socket if the collector had to be killed. The
-# plugin's directories go once empty.
+# a script it imports - the scripts' and the sources' - which would keep the scripts' directory; nor
+# the map, the counts, the history and the alerts in /var/db; nor the pidfiles and the socket if the
+# collector had to be killed. The plugin's directories go once empty.
 if [ -f /usr/local/etc/syslog-ng.conf.d/useridentity.conf ]; then
 	rm -f /usr/local/etc/syslog-ng.conf.d/useridentity.conf
 	[ -f /usr/local/sbin/configctl ] && /usr/local/sbin/configctl syslog restart > /dev/null 2>&1 || true
 fi
-rm -rf /usr/local/opnsense/scripts/useridentity/__pycache__ /var/db/os-useridentity
+rm -rf /usr/local/opnsense/scripts/useridentity/__pycache__ /usr/local/opnsense/scripts/useridentity/sources/__pycache__ \
+	/var/db/os-useridentity
 rm -f /var/run/useridentity.pid /var/run/useridentity.daemon.pid /var/run/useridentity.sock
 for d in /usr/local/opnsense/scripts/useridentity /usr/local/opnsense/mvc/app/library/OPNsense/UserIdentity; do
 	[ -d "${d}" ] && find "${d}" -depth -type d -empty -delete 2> /dev/null
