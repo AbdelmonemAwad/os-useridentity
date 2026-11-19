@@ -532,13 +532,14 @@ class Collector:
             return None
         for zone, name in self.conf['zones'].items():
             self.sources.touch(zone, now, 'portal', name)
+        _, directory = self.directory_names()
         listed = {}
         for key in sorted(found):
             session = found[key]
             zone, first = session['zone'], key not in self.portal_counted
             if first:
                 self.sources.line(zone, now, 'portal')
-            reason = portal.refused(session, self.conf['vouchers'])
+            reason = portal.refused(session, self.conf['vouchers'], directory)
             if reason:
                 if first:
                     self.sources.refused(zone, reason, 'portal')

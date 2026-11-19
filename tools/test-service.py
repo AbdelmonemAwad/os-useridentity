@@ -676,9 +676,11 @@ try:
           (fix.sources.kinds['radius']['192.0.2.40']['ended'], fix.sources.kinds['portal']['0']['ended'],
            fix.sources.kinds['radius']['192.0.2.40']['lines']), (ended[0] + 1, ended[1] + 1, ended[2] + 1))
 
+    sessions([(0, 'q', 'Local Database', 'user1', '192.0.2.89', '', now + 1320, 0)])
     write('192.0.2.40', 'Start', 'user1@partner.example', '192.0.2.82', int(now) + 1320, 'p1', '192.0.2.40')
-    check('another directory: a RADIUS name of another realm maps nothing, counted',
-          (fix.poll(now + 1321), fix.sources.kinds['radius']['192.0.2.40']['refused'].get('another directory')), ([], 1))
+    check('another directory: a portal session the Local Database let in, a RADIUS name of another realm - neither '
+          'maps, each counted', (fix.poll(now + 1321), fix.sources.kinds['portal']['0']['refused'].get('another directory'),
+                                 fix.sources.kinds['radius']['192.0.2.40']['refused'].get('another directory')), ([], 1, 1))
 
     write('192.0.2.40', 'Start', 'user8', '192.0.2.83', int(now) + 1330, 's8', '192.0.2.40')
     fix.poll(now + 1331)

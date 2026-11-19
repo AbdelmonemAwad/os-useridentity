@@ -20,7 +20,8 @@ a part at a time, radius.json written at most every ten seconds, and where the r
 The portal: a database with the tables of OPNsense core's captiveportal (cp_clients, cp_client_ips) -
 the sessions of the zones switched on, not those deleted, each with its roaming addresses; a database
 not there, one that cannot be read, one without cp_client_ips; the sessions that map nothing - an
-allowed address or MAC, a zone with no login, a voucher, no address; and what the map is to do to say
+allowed address or MAC, a zone with no login, a voucher, another directory, no address; and what the
+map is to do to say
 what the portal says: a session's addresses mapped at the first reading, renewed once a minute, taken
 out at its end, a roaming address added and dropped, another login of the same user on the device no
 logoff, a later event of another source not taken back but noted, a mapping forgotten made again, and,
@@ -420,6 +421,14 @@ with tempfile.TemporaryDirectory() as tmp:
     check('refused: an allowed address, a voucher, a zone with no login, no address; a user\'s session not',
           [portal.refused(found[k], {'Vouchers'}) for k in ('2/d', '2/e', '2/f', '2/g', '0/a')],
           ['not a user', 'voucher', 'not a user', 'no address', ''])
+    check('another directory: with Groups from chosen, a session another server let in - the Local Database - '
+          'refused; one of the directory chosen taken; none chosen, none refused',
+          [portal.refused(found['2/g'], {'Vouchers'}, 'Example directory'),
+           portal.refused(dict(found['2/g'], addresses=['192.0.2.94']), {'Vouchers'}, 'Example directory'),
+           portal.refused(found['0/a'], {'Vouchers'}, 'Example directory'),
+           portal.refused(dict(found['2/g'], addresses=['192.0.2.94']), {'Vouchers'}, None),
+           portal.refused(found['2/e'], {'Vouchers'}, 'Example directory')],
+          ['another directory', 'another directory', '', '', 'voucher'])
     check('read: no database - no zone has run - no session', portal.read(zones, os.path.join(tmp, 'none')), ({}, ''))
     with open(os.path.join(tmp, 'bad.sqlite'), 'w') as handle:
         handle.write('not a database, but long enough to be read as one ' * 20)

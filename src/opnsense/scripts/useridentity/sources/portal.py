@@ -22,9 +22,12 @@ the address again.
 Refused, each counted once a session by its reason: the portal's own sessions of an allowed address or
 MAC address (---ip---, ---mac---) and those of a zone with no login (anonymous@ and the address) - not
 a user; a voucher's session - System: Access: Servers names its server a voucher, and a code anyone may
-hold is not a user; then, as for the domain controllers, an address that is no client's, the firewall's
-own, a domain controller's, Never map's, and a user of Ignore users. Only the zones switched on in
-Services: Captive Portal are read.
+hold is not a user; with a directory chosen in Groups from, a session another server let in - the Local
+Database, another LDAP or RADIUS entry (another directory: the portal says which in authenticated_via,
+and its user's groups and user table would be those of a user of the same name in the directory);
+then, as for the domain controllers, an address that is no client's, the firewall's own, a domain
+controller's, Never map's, and a user of Ignore users. Only the zones switched on in Services: Captive
+Portal are read.
 """
 
 import os
@@ -83,12 +86,15 @@ def read(zones, path=None):
     return out, ''
 
 
-def refused(session, vouchers):
-    """Why a session maps nothing, whatever its addresses - see the top - or ''."""
+def refused(session, vouchers, directory=None):
+    """Why a session maps nothing, whatever its addresses - see the top - or ''. directory: the System:
+    Access: Servers entry Groups from names, when one is chosen."""
     if session['via'] in ALLOWED or session['user'] in NOBODY:
         return 'not a user'
     if session['via'] in vouchers:
         return 'voucher'
+    if directory is not None and session['via'].strip() != directory.strip():
+        return 'another directory'
     if not session['addresses']:
         return 'no address'
     return ''
