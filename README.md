@@ -174,8 +174,10 @@ user's groups asked of the same directory, whichever source mapped it:
   roamed, the second access point's Start before the first one's Stop - nor a mapping renewed after the
   Stop's own time - a Stop read late. Accounting-On and Accounting-Off end, the same way, every session
   of the NAS they name by NAS-IP-Address, NAS-IPv6-Address or NAS-Identifier - behind a RADIUS server
-  that forwards several, that NAS's alone - and every session of their client when they name none. A
-  record's time is when FreeRADIUS wrote it, less the seconds the NAS said it waited: the firewall's
+  that forwards several, that NAS's alone - and every session of their client when they name none;
+  but os-freeradius as installed writes the sender's address as NAS-IP-Address into a request that
+  names none (measured on the second XGS 3300), so through it such a request ends the sessions of the
+  NAS that sent it. A record's time is when FreeRADIUS wrote it, less the seconds the NAS said it waited: the firewall's
   clock. Read late - after a restart - a Start or an Interim-Update still counts unless it is older than
   the mapping lifetime (stale). Refused: no user, or one that names nobody (anonymous); a computer
   (`host/...`, a name ending in `$`); a MAC address as the name, as a NAS sends for a device let in by

@@ -79,7 +79,7 @@
  "RADIUS",
  "RADIUS accounting",
  "RADIUS clients",
- "RADIUS: each client named in Settings, and any other of os-freeradius whose accounting was read and refused - its records, the addresses a Start or an Interim-Update mapped or renewed, those a Stop ended, those older than the mapping lifetime when read (stale), those refused and why; Accounting-On and Accounting-Off among the others, each ending the sessions of the NAS it names - every session of its client when it names none. Captive Portal: each zone switched on - the sessions it held, the addresses they mapped and those their end took out, and those refused and why.",
+ "RADIUS: each client named in Settings, and any other of os-freeradius whose accounting was read and refused - its records, the addresses a Start or an Interim-Update mapped or renewed, those a Stop ended, those older than the mapping lifetime when read (stale), those refused and why; Accounting-On and Accounting-Off among the others, each ending the sessions of the NAS it names - os-freeradius names the one that sent it when the request names none. Captive Portal: each zone switched on - the sessions it held, the addresses they mapped and those their end took out, and those refused and why.",
  "Refresh",
  "Refused",
  "Renewed",
