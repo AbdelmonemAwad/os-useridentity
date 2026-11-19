@@ -26,10 +26,11 @@ Who is behind an address: logons read from the Active Directory domain controlle
 > asked of the directory, a table for each group chosen and each user named. Off by default. It has
 > not run on an appliance yet: what was run is under [What is tested](#what-is-tested).
 >
-> **The second part, written 2026-11-19, not released:** RADIUS accounting and the captive portal's
-> sessions as sources beside the domain controllers - each off until Settings turns it on - the latest
-> event winning an address whichever source it came from, and the page showing two sources that clash
-> over one. It has not run on an appliance: what was run is under [What is tested](#what-is-tested).
+> **The second part, written 2026-11-19 and corrected after its review on 2026-11-20, not released:**
+> RADIUS accounting - of the RADIUS clients Settings names - and the captive portal's sessions as
+> sources beside the domain controllers - each off until Settings turns it on - the latest logon
+> winning an address whichever source it came from, and the page showing two sources that clash over
+> one. It has not run on an appliance: what was run is under [What is tested](#what-is-tested).
 
 <p align="center"><b>Contents:</b> <a href="#what-it-does">What it does</a> &middot; <a href="#how-a-logon-becomes-a-table">How a logon becomes a table</a> &middot; <a href="#radius-and-the-captive-portal">RADIUS and the captive portal</a> &middot; <a href="#not-yet-and-why">Not yet, and why</a> &middot; <a href="#what-is-tested">What is tested</a> &middot; <a href="#installation">Installation</a> &middot; <a href="#updates">Updates</a> &middot; <a href="#where-it-fits">Where it fits</a> &middot; <a href="#licence">Licence</a></p>
 
@@ -45,9 +46,10 @@ by default:
     Edition on each domain controller sends them as JSON over TCP; the page shows its configuration to
     copy - each event's time sent as seconds since 1970, in UTC (`$EventTime = integer($EventTime) /
     1000000`), and the event's long text left out (`delete($Message)`), which nothing here reads;
-  - **RADIUS accounting** - the records os-freeradius writes of each Accounting-Request its clients send:
-    a Start maps the session's Framed-IP-Address to its user, each Interim-Update renews it, a Stop takes
-    it out ([below](#radius-and-the-captive-portal));
+  - **RADIUS accounting** - the records os-freeradius writes of each Accounting-Request the RADIUS
+    clients named in Settings send: a Start maps the session's Framed-IP-Address to its user, each
+    Interim-Update renews it, a Stop takes it out ([below](#radius-and-the-captive-portal), with what a
+    client must be to be named);
   - **the captive portal** - each session of its zones, read from the portal's own database: the
     session's addresses are its user's from the logon to the logout or the portal's own timeout;
 - **the latest wins** - an address another user is seen on later is that user's, whichever source said
@@ -131,9 +133,10 @@ NXLog's and the domain controller's behaviour, not this plugin's:
   OPNsense's connector reads memberOf alone; the lab found a user in a group only through a group
   inside it by the in-chain rule;
 - **every minute** - from cron, whether the collector runs or not: the lifetimes ended, the MAC check,
-  the mappings of a source switched off - RADIUS accounting or the captive portal turned off, a zone
-  switched off, a domain controller no longer named - and every table made again from the map, so one
-  emptied by hand or written while the collector was down is right within a minute.
+  the mappings of a source switched off - RADIUS accounting or the captive portal turned off, a RADIUS
+  client no longer named, a zone switched off; a domain controller no longer named leaves its mappings
+  to their lifetime, as they were made true - and every table made again from the map, so one emptied
+  by hand or written while the collector was down is right within a minute.
 
 ## RADIUS and the captive portal
 
@@ -145,30 +148,59 @@ user's groups asked of the same directory, whichever source mapped it:
 - **RADIUS accounting** - os-freeradius sends every Accounting-Request through FreeRADIUS's detail
   module, which appends it to `/var/log/radacct/<client>/detail-YYYYMMDD`, one file a day, 0600
   root:freeradius, in the second the request comes (phase 0's A9: os-freeradius 1.10.3, freeradius3
-  3.2.10). The collector reads what is written each second, as root, and goes on where it stopped after
-  a restart (`radius.json`). Only a client of Services: FreeRADIUS reaches the file - FreeRADIUS takes a
-  request only with the secret the two share - so a NAS, or another RADIUS server that forwards its
-  accounting, must be one. A Start maps Framed-IP-Address (and Framed-IPv6-Address) to User-Name, an
-  Interim-Update renews it - one without an address renews the address the session had, one with
-  another moves it - a Stop takes the session's addresses out, and Accounting-On or Accounting-Off ends
-  every session of its NAS. A record's time is when FreeRADIUS wrote it, less the seconds the NAS said it
-  waited: the firewall's clock. Read late - after a restart - a record still counts unless it is older
-  than the mapping lifetime (stale). Refused: no user, or one that names nobody (anonymous); a computer
+  3.2.10). The collector reads what is written each second, as root - only the files of the days a
+  record within the lifetime can be in, since nothing takes the older ones away - and goes on where it
+  stopped after a restart (`radius.json`, written at most every ten seconds and when it stops). A NAS,
+  or another RADIUS server that forwards its accounting, must be a client of Services: FreeRADIUS, and
+  named in Settings' **RADIUS clients** by its address - the name of the directory FreeRADIUS writes
+  its records in. A record from any other client is refused, and with none named none maps;
+- **whose name a record carries** - the name its NAS reports. With EAP - PEAP, TTLS or TLS, most
+  802.1X - that is the outer name the device itself gives, which its user may set to anyone's: a
+  student with a valid account who gives "ceo" there is mapped as ceo, into ceo's tables - unless
+  FreeRADIUS makes it the name it authenticated: for TLS, os-freeradius's Check TLS Common-Name (off by
+  default) refuses a name the certificate does not carry; for PEAP and TTLS, FreeRADIUS's
+  `filter_inner_identity` policy, which os-freeradius leaves out, refuses an outer name that is neither
+  the inner one nor anonymous; or FreeRADIUS returns the authenticated name to the NAS in the
+  Access-Accept, which the NAS then puts in its accounting (RFC 2865 5.1) - os-freeradius does not. So
+  name a client only when its names are those FreeRADIUS authenticated: a NAS whose users log on with
+  PAP or CHAP, or one behind a FreeRADIUS set up so. A client of Services: FreeRADIUS may also be a
+  whole network sharing one secret: naming each NAS by its own address keeps every other device of that
+  network out;
+- **what a record does** - a Start maps Framed-IP-Address (and Framed-IPv6-Address) to User-Name, as a
+  logon: the latest wins. An Interim-Update renews it - one without an address renews the address the
+  session had, one with another moves it - but takes back no address a later logon of another user
+  took: that user keeps it, and the session's is noted beside it, the clash shown. A Stop takes the
+  session's addresses out, but not one another open session of the same user holds - a device that
+  roamed, the second access point's Start before the first one's Stop - nor a mapping renewed after the
+  Stop's own time - a Stop read late. Accounting-On and Accounting-Off end, the same way, every session
+  of the NAS they name by NAS-IP-Address, NAS-IPv6-Address or NAS-Identifier - behind a RADIUS server
+  that forwards several, that NAS's alone - and every session of their client when they name none. A
+  record's time is when FreeRADIUS wrote it, less the seconds the NAS said it waited: the firewall's
+  clock. Read late - after a restart - a Start or an Interim-Update still counts unless it is older than
+  the mapping lifetime (stale). Refused: no user, or one that names nobody (anonymous); a computer
   (`host/...`, a name ending in `$`); a MAC address as the name, as a NAS sends for a device let in by
-  its MAC alone;
+  its MAC alone; with a directory chosen in Groups from, a name written with a realm or a domain that is
+  not the directory's - the domain its base DN names, or that domain's first label - as another
+  directory's: its groups would be those of a user of the same name in the directory;
 - **the captive portal** - the sessions of the zones switched on, read every two seconds from the
   portal's own database (`/var/captiveportal/captiveportal.sqlite`, read-only), as the portal's own
   API lists them and os-xgs-npu's `cp_users.py` reads them: each session's address and its roaming
   addresses are its user's for as long as the portal holds the session - which is as long as it lets
   them through - and leave the map at the first reading after it ends. Refused: the portal's sessions
   of an allowed address or MAC address, those of a zone with no login, and those a voucher opened -
-  System: Access: Servers names its server a voucher, and a code anyone may hold is not a user;
-- **a clash** - two sources that give one address to two users within the lifetime: the later event
+  System: Access: Servers names its server a voucher, and a code anyone may hold is not a user - and,
+  with a directory chosen in Groups from, those another server let in, the Local Database among them, as
+  the portal says in each session: their users' groups and user tables would be those of a user of the
+  same name in the directory;
+- **a clash** - two sources that give one address to two users within the lifetime: the later logon
   wins, as between two logons, and the Users tab names the other user and its source. A portal session
-  that lost its address to a later event of another source does not take it back while that mapping
-  lives; it stays among the others, and the clash shown, until one of them ends;
+  or a RADIUS session that lost its address to a later logon of another user does not take it back
+  while that mapping lives; it stays among the others, and the clash shown, until one of them ends. A
+  clash that lasts - one account many share on one source, as a shared 802.1X account, each user's own
+  logon on the other - ends with that account in Ignore users;
 - **a logoff** - a RADIUS Stop and the end of a portal session take the address out when it is still
-  their user's, whichever source renewed it last: the surest word there is. A domain controller says
+  their user's, whichever source renewed it last - the surest word there is - unless another session of
+  the same user holds it, or, for a Stop, the mapping was renewed after it. A domain controller says
   none, and its mappings end as before;
 - **the MAC check** - for the domain controllers' and RADIUS's mappings; a portal session's address is
   the portal's to end;
@@ -191,13 +223,18 @@ user's groups asked of the same directory, whichever source mapped it:
 - **another RADIUS server read directly** - only os-freeradius's accounting, on the firewall: another
   server is read when it forwards its accounting to os-freeradius as one of its clients. Nothing of the
   plugin's listens for RADIUS.
-- **an EAP client's hidden name** - an 802.1X client that gives an anonymous outer name has its
-  accounting name nobody, unless the RADIUS server returns the inner name to the NAS in User-Name.
+- **the name FreeRADIUS authenticated, checked here** - a record is taken with the name its NAS reports,
+  from the RADIUS clients named alone ([above](#radius-and-the-captive-portal)). Nothing os-freeradius
+  writes as installed ties the name FreeRADIUS authenticated to a session - its log of authentications,
+  off by default, names a tunnel's inner user without the device it came from - so the plugin cannot
+  check a record's name against it. An 802.1X client that gives an anonymous outer name maps nobody.
 - **a NAS without Interim-Update** - its sessions renew nothing: a mapping ends at the end of its
   lifetime, even while the session goes on. A Framed-IPv6-Prefix maps nothing: an address does.
-- **the groups of a portal's Local Database user** - groups come from the directory chosen in Settings
-  alone: a user of OPNsense's own Local Database is in a group's table when that directory holds a user
-  of the same name; OPNsense's local groups are not read.
+- **the groups of another directory's users** - groups come from the directory chosen in Settings alone.
+  With one chosen, a portal session another server let in - the Local Database among them - and a
+  RADIUS name of another realm map nothing; with none chosen, every source's names are one: a user of
+  the Local Database is in the table of a user row of the same name. OPNsense's local groups are not
+  read.
 - **a rule's gateway by user** - phase 3, with os-xgs-npu's hardware side (its pull request for
   route-to in the coprocessor).
 - **several domains** - users are known by their logon name: two domains of one forest with a user of
@@ -342,15 +379,15 @@ Python 3.14, PHP 8.5 and node 24, every one of the first part's with them:
   the detail file's quoting, a record still being written left for the next reading, the record's time
   (Timestamp less Acct-Delay-Time, or its first line), each status by name and by number, what is
   refused and why; the sessions an Interim-Update renews, a Stop ends, another address moves,
-  Accounting-On ends for its NAS alone; the files read as they grow - one never read taken whole when
-  written within the lifetime, else from its end, what was read kept across a restart, one cut short or
-  made again read from its start, one gone forgotten, a large one read a part at a time. The portal: a
-  database with core's tables - the zones switched on, not the sessions deleted, the roaming addresses,
-  no database, one that cannot be read, one without its roaming table; the sessions refused; and what
-  the map is to do - mapped at the first reading, renewed once a minute, taken out at the end, a roaming
-  address added and dropped, the same user logging on again no logoff, another user on the device no
-  clash, a later event of another source not taken back but noted, a mapping forgotten made again, and
-  a session ended while the collector was down;
+  Accounting-On ending its client's sessions alone; the files read as they grow - one never read taken
+  whole when written within the lifetime, else from its end, what was read kept across a restart, one
+  cut short or made again read from its start, one gone forgotten, a large one read a part at a time.
+  The portal: a database with core's tables - the zones switched on, not the sessions deleted, the
+  roaming addresses, no database, one that cannot be read, one without its roaming table; the sessions
+  refused; and what the map is to do - mapped at the first reading, renewed once a minute, taken out at
+  the end, a roaming address added and dropped, the same user logging on again no logoff, another user
+  on the device no clash, a later event of another source not taken back but noted, a mapping forgotten
+  made again, and a session ended while the collector was down;
 - **the map** - `tools/test-engine.py`, 96 checks now: with the first part's, each mapping's source and
   who said it, renewed by another source, an older event naming none, latest wins across two sources and
   the clash, a note that keeps the clash, a logoff - of the user that holds the address or of one among
@@ -381,6 +418,42 @@ Python 3.14, PHP 8.5 and node 24, every one of the first part's with them:
 - **the rest** - `php -l`, `py_compile` and pyflakes, `sh -n`, XML and JSON, nothing private, no Arabic in
   the code, the copyright line, and the page kit (kit).
 
+On 2026-11-20, after the second part's review, from this branch, away from an appliance - the same
+checks, with one for each thing the review found, each failing without its fix:
+
+- **RADIUS accounting and the captive portal** - `tools/test-sources.py`, 98 checks now: a client not
+  named refused before anything else is read of its record - the review's student who gives "ceo" as
+  the outer name maps nothing - and a client named by its IPv6 address however its directory writes it;
+  a name of another realm or domain refused, its Stop too, while a directory is chosen; a device that
+  roams - the second access point's Start, then the first one's Stop - ending nothing, and the second
+  Stop ending it; three switches behind one forwarding server, the Accounting-On of one ending its
+  session alone, by its address or by its identifier, and one that names no NAS every session of its
+  client; an Interim-Update a renewal of the address its session had and a logon of a new one; where
+  the reading stood put back; radius.json written at most every ten seconds, and at the end; only the
+  days a record within the lifetime can be in read - a day a week old, a compressed file and another
+  module's never - and the file of a day past the lifetime forgotten; a portal session the Local
+  Database let in refused as another directory's; every reason refused for named on the page;
+- **the map** - `tools/test-engine.py`, 110 checks now: a logoff said before the mapping's last renewal,
+  as a Stop read an hour late, ending nothing, and a user noted after a logoff staying among the others;
+  an Interim-Update of an address a later domain logon took noted, not taken back, at every interval;
+  a domain controller no longer named leaving its mappings to their lifetime; the RADIUS clients named
+  and the directory's realms read from `config.xml`;
+- **the service** - `tools/test-service.py`, 127 checks now, through the collector: a client not named
+  counted as refused and listed as not named; a roam between two clients keeping the address and its
+  table; a Stop an hour older than a domain logon a second before ending nothing; a shared account's
+  Interim-Updates after a domain logon leaving the address with the domain user, the clash shown; /var
+  full while a Stop and a portal logout come - the map not saved, both read again at the next reading
+  and applied, each counted once; a Local Database portal session and a RADIUS name of another realm
+  refused and counted; a RADIUS client taken out of Settings - its sessions forgotten, its mapping out at
+  the minute - beside a domain controller taken out, whose mappings stay;
+- **the page's script** - `tools/test-page.js`, 23 checks now: no RADIUS client named said on the
+  sources card, and a client not named and a user of another directory among Sources' refusals;
+- **the strings** - `tools/check-strings.py`: each of the 177 strings the GUI shows is in `source.json`;
+  30 of them wait for their Arabic in opnsense-arabic;
+- **the rest** - the other checks as on 2026-11-19, each passing, and `php -l`, `py_compile` and
+  pyflakes, `sh -n`, XML and JSON, nothing private, no Arabic in the code, the copyright line, and the
+  page kit (kit).
+
 ## Installation
 
 It is not in the OPNsense plugin repository, so there is no `pkg install os-useridentity`, and there is
@@ -399,8 +472,10 @@ controllers named in Settings, a directory chosen and group or user rows given. 
 settings in config.xml are kept. No package is needed beside it: py-ldap3 is part of OPNsense's core.
 
 Then, on each domain controller: NXLog Community Edition, with the configuration Sources shows. For
-RADIUS accounting: os-freeradius, each NAS a client of it with its accounting sent there. For the
-captive portal: a zone of Services: Captive Portal with a login.
+RADIUS accounting: os-freeradius, each NAS a client of it with its accounting sent there, and named in
+Settings' RADIUS clients when its names are the ones FreeRADIUS authenticated
+([above](#radius-and-the-captive-portal)). For the captive portal: a zone of Services: Captive Portal
+with a login.
 
 `sh install/uninstall.sh` stops the collector, forgets the map, takes the plugin's aliases out of
 Firewall: Aliases and XGS: Settings' cut list (switched off instead where a rule or a setting still
