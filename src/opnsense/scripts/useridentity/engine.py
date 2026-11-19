@@ -24,14 +24,19 @@ The rules (settled points 7 and 8, and the plan's top-03 for the sources beside 
 
 - join: an address not in the map is mapped to the event's user;
 - renew: an event of the same user moves last and expires on, whichever source it came from;
-- latest wins: an event of another user, no older than the last one, maps the address to that user,
+- latest wins: a logon of another user, no older than the last event, maps the address to that user,
   and the one before goes into others: the address is shared - a runas or a service logon on a client
   does this while another user sits at its console (the lab's A6) - and when the two users came from
-  two sources, the sources clash over it. An older event of another user is only noted in others;
+  two sources, the sources clash over it. An older event of another user is only noted in others, and
+  so is a session's renewal - a RADIUS Interim-Update - of an address a later logon took from it: the
+  session goes on, but it is no new logon, and taking the address back at each update would move it
+  between the two users at every interval;
 - leave: at the lifetime's end; when the address's MAC in ARP is not the one it had (another device
-  took it); when a source says its user left - a RADIUS Stop, a captive portal session ended; when the
-  source that gave it last is switched off; or when the owner forgets every mapping. A domain
-  controller says nothing at a logoff (the lab's A2): its mappings end by the others alone.
+  took it); when a source says its user left - a RADIUS Stop, a captive portal session ended - unless
+  that user's mapping was renewed after the word was said; when the source that gave it last is
+  switched off; or when the owner forgets every mapping. A domain controller says nothing at a logoff
+  (the lab's A2): its mappings end by the others alone - and are left to their lifetime when it is no
+  longer named in Settings, as they were made true.
 
 Times are the events' own, never later than their arrival, so an event sent late renews no further
 than when it happened. The map is changed by the collector for each batch of events and by expire.py
@@ -186,6 +191,18 @@ def see(state, event, arrival, lifetime, source=''):
     return changes
 
 
+def renew(state, event, arrival, lifetime, source='', since=None):
+    """A session's renewal of an address it had - a RADIUS Interim-Update - as see() takes a logon, but
+    for an address another user's later logon took: that user keeps it, and the session's is noted among
+    the others (the clash stays shown), as the captive portal's sessions do. since is the session's own
+    logon: a mapping no later than it was not a later logon, and the session takes the address."""
+    where, user = event['address'], event['user']
+    entry = state['map'].get(where)
+    if entry is None or entry['user'] == user or (since is not None and entry.get('last', 0) <= since):
+        return see(state, event, arrival, lifetime, source)
+    return note(state, where, user, event.get('kind', 'ad'), min(event['time'], arrival), lifetime)
+
+
 def note(state, where, user, kind, when, lifetime):
     """A source still gives the address to a user that lost it to a later event: kept among the others,
     so the page goes on showing the clash while both say so. [('shared', ...)] when that makes the
@@ -201,19 +218,24 @@ def note(state, where, user, kind, when, lifetime):
     return []
 
 
-def leave(state, user, where, reason='logoff'):
+def leave(state, user, where, reason='logoff', when=None):
     """A source says the user left the address - a RADIUS Stop, a captive portal session ended: the
     address leaves the map when it is still that user's, whichever source renewed it last (a logoff is
     the surest word there is); when another user holds it, the one that left is only no longer among
-    the others."""
+    the others. when, the time the source said it: a mapping that user's renewed after it - by a domain
+    controller's event, or a session elsewhere - is not ended by it, nor is a later note of the user
+    among the others; a Stop read hours late ends only what it ended then."""
     entry = state['map'].get(where)
     if entry is None:
         return []
     if entry['user'] == user:
+        if when is not None and entry.get('last', 0) > when:
+            return []
         del state['map'][where]
         return [('left', where, (user, reason))]
-    entry.get('others', {}).pop(user, None)
-    entry.get('via', {}).pop(user, None)
+    if when is None or entry.get('others', {}).get(user, 0) <= when:
+        entry.get('others', {}).pop(user, None)
+        entry.get('via', {}).pop(user, None)
     return []
 
 

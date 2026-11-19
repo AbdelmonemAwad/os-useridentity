@@ -18,6 +18,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'src', 'opnsense', 'scripts', 'useridentity'))
 import engine                                                            # noqa: E402
 import events                                                            # noqa: E402
+import expire                                                            # noqa: E402
 import host                                                              # noqa: E402
 import settings                                                          # noqa: E402
 import tables                                                            # noqa: E402
@@ -437,6 +438,46 @@ check('leave: the user that holds it - the address leaves the map',
       ([('left', '192.0.2.62', ('user1', 'logoff'))], False))
 check('leave: an address not mapped - nothing', engine.leave(state, 'user1', '192.0.2.62'), [])
 
+# leave with the time the source said it (the review's second finding, case B): a Stop read hours late - RADIUS
+# switched on at 23:00, alice's Stop of 01:00 in today's file - ends nothing renewed after it
+state = fresh()
+engine.see(state, ev('alice', '192.0.2.66', T0 + 3600), T0 + 3600, LIFE, '192.0.2.10')
+check('leave said before the mapping was last renewed - a domain controller\'s event a minute ago: nothing ends',
+      (engine.leave(state, 'alice', '192.0.2.66', when=T0 + 600), '192.0.2.66' in state['map']), ([], True))
+check('leave said at the time of the last renewal, or after it: the address leaves',
+      engine.leave(state, 'alice', '192.0.2.66', when=T0 + 3600), [('left', '192.0.2.66', ('alice', 'logoff'))])
+engine.see(state, ev('u1', '192.0.2.67', T0), T0, LIFE, '192.0.2.10')
+engine.note(state, '192.0.2.67', 'u2', 'radius', T0 + 100, LIFE)
+engine.leave(state, 'u2', '192.0.2.67', when=T0 + 50)
+check('a leave said before a user was last noted among the others: still among them',
+      state['map']['192.0.2.67']['others'], {'u2': T0 + 100})
+engine.leave(state, 'u2', '192.0.2.67', when=T0 + 200)
+check('... said after: no longer', (state['map']['192.0.2.67']['others'], state['map']['192.0.2.67']['via']), ({}, {}))
+
+# renew: a RADIUS session's Interim-Update (the review's ninth finding) - 802.1X with a shared wifi-staff account
+# while u1 logs on to the domain from the same device
+state = fresh()
+engine.see(state, evk('wifi-staff', '192.0.2.80', T0, 'radius'), T0, LIFE, '192.0.2.40')
+engine.see(state, ev('u1', '192.0.2.80', T0 + 5, 4624), T0 + 5, LIFE, '192.0.2.10')
+entry = state['map']['192.0.2.80']
+check('renew: the Interim-Update of an address a later logon took - not taken back: noted, the clash shown',
+      (engine.renew(state, evk('wifi-staff', '192.0.2.80', T0 + 600, 'radius', 'Interim-Update'), T0 + 600, LIFE,
+                    '192.0.2.40', T0), entry['user'], entry['others']['wifi-staff'], entry['via'],
+       engine.clash(entry, T0 + 600, LIFE)),
+      ([], 'u1', T0 + 600, {'wifi-staff': 'radius'}, ['wifi-staff']))
+check('... at every interval: the address stays u1\'s',
+      [engine.renew(state, evk('wifi-staff', '192.0.2.80', T0 + 600 * n, 'radius', 'Interim-Update'), T0 + 600 * n, LIFE,
+                    '192.0.2.40', T0) for n in (2, 3)] + [entry['user']], [[], [], 'u1'])
+check('renew: of an address the session\'s user holds - renewed',
+      engine.renew(state, evk('u1', '192.0.2.80', T0 + 1900, 'radius', 'Interim-Update'), T0 + 1900, LIFE, '192.0.2.40',
+                   T0 + 1850), [('renewed', '192.0.2.80', 'u1')])
+check('renew: of an address another user holds by an event no later than the session\'s logon - the session takes it',
+      engine.renew(state, evk('wifi-staff', '192.0.2.80', T0 + 2000, 'radius', 'Interim-Update'), T0 + 2000, LIFE,
+                   '192.0.2.40', T0 + 1950)[0], ('changed', '192.0.2.80', ('u1', 'wifi-staff')))
+check('renew: of an address that is no one\'s - forgotten, or its mapping ended - mapped again',
+      engine.renew(state, evk('wifi-staff', '192.0.2.81', T0 + 2100, 'radius', 'Interim-Update'), T0 + 2100, LIFE,
+                   '192.0.2.40', T0), [('joined', '192.0.2.81', 'wifi-staff')])
+
 # drop: the mappings of a source switched off
 state = fresh()
 engine.see(state, ev('user1', '192.0.2.63', T0), T0, LIFE, '192.0.2.10')
@@ -450,6 +491,12 @@ check('MAC check: a portal session\'s address left to the portal, the domain con
       engine.check_macs(state, {'192.0.2.63': '02:00:00:00:00:64', '192.0.2.65': '02:00:00:00:00:66'}),
       [('left', '192.0.2.63', ('user1', 'mac'))])
 check('... nothing recorded for the portal\'s', state['map']['192.0.2.65']['mac'], '')
+# a domain controller taken out of Settings (the review's seventh finding): none says a user left, so its mappings
+# end at their lifetime as they would have - the minute's run takes no user out of a table for it
+keep = expire.kept(dict(settings.read(os.path.join(ROOT, 'tools', 'fixtures', 'config.xml')), dcs=['192.0.2.11']))
+check('the minute\'s run: a mapping of a domain controller no longer named kept to its lifetime, one naming none too',
+      (keep({'kind': 'ad', 'source': '192.0.2.10'}), keep({'kind': 'ad', 'source': ''}), keep({'user': 'u'})),
+      (True, True, True))
 
 # a map the first part wrote: no kind, no via
 with tempfile.TemporaryDirectory() as tmp:

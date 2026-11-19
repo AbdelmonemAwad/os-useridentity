@@ -10,7 +10,8 @@
   one it had leaves the map - another device has it - while Settings has it on;
 - with the plugin off, every mapping forgotten;
 - the mappings a source switched off gave last taken out: RADIUS accounting or the captive portal
-  turned off in Settings, a portal's zone switched off, a domain controller no longer named;
+  turned off in Settings, a portal's zone switched off - a domain controller no longer named leaves its
+  mappings to their lifetime;
 - every table of the plugin's made again from the map, so one emptied by hand, or written while the
   collector was down, is right within a minute; and the table of an alias of the plugin's switched off -
   kept because a rule or a setting names it - kept empty;
@@ -73,16 +74,17 @@ def silent(conf, now, sources=None, notes=None):
 
 def kept(conf):
     """Whether a mapping's source is still on: RADIUS accounting, the captive portal and the zone of the
-    session, the domain controller named. A mapping that names no domain controller - none of this
-    plugin's own makes one - is left to its lifetime."""
+    session - their logoffs are read no more once off. A domain controller's mapping is kept whether its
+    domain controller is still named or not: none ever says a user left, so its mappings end at their
+    lifetime as they would have - a domain controller retired takes no user out of a table at the next
+    minute. Forget every mapping ends them at once."""
     def keep(entry):
         kind = entry.get('kind', 'ad')
         if kind == 'radius':
             return conf['radius']
         if kind == 'portal':
             return conf['portal'] and entry.get('source', '') in conf['zones']
-        source = entry.get('source') or ''
-        return not source or source in conf['dcs']
+        return True
     return keep
 
 
