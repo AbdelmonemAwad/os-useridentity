@@ -265,6 +265,27 @@ def expire(state, now, lifetime):
     return changes
 
 
+def forget_ignored(state, ignore):
+    """Users put in Ignore users since they were seen: what they hold ends, and they leave the others -
+    so a clash over one account many share, each user's own on another source, ends at the next minute
+    once that account is in Ignore users, as the Users tab says. ignore holds the names in lower case,
+    as settings.py reads them and events.py refuses them."""
+    changes = []
+    if not ignore:
+        return changes
+    for where in sorted(state['map']):
+        entry = state['map'][where]
+        if entry['user'].lower() in ignore:
+            del state['map'][where]
+            changes.append(('left', where, (entry['user'], 'ignored')))
+            continue
+        others = entry.get('others', {})
+        for user in [u for u in others if u.lower() in ignore]:
+            others.pop(user, None)
+            entry.get('via', {}).pop(user, None)
+    return changes
+
+
 def check_macs(state, macs):
     """The MAC check (settled point 7): an address whose MAC in the firewall's ARP or NDP table is not
     the one it had leaves the map - another device has it; one with no MAC yet takes the one there.

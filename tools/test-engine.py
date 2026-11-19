@@ -101,6 +101,24 @@ check('expire: at its time it leaves', engine.expire(state, T0 + 60 + LIFE, LIFE
       [('left', '192.0.2.20', ('user2', 'expired'))])
 check('expire: the other stays', sorted(state['map']), ['198.51.100.20'])
 
+# Ignore users after the fact (the lab, 2026-11-19, step 7): a shared account put in Ignore users while it holds
+# one address and is noted on another - what it holds ends, its notes go, and so does the clash they made
+state = fresh()
+engine.see(state, ev('WiFi-Staff', '192.0.2.30', T0 + 10), T0 + 10, LIFE)
+engine.see(state, ev('wifi-staff', '192.0.2.31', T0 + 20), T0 + 20, LIFE)
+engine.see(state, ev('user1', '192.0.2.31', T0 + 30), T0 + 30, LIFE)
+state['map']['192.0.2.31']['via'] = {'wifi-staff': 'radius'}
+check('ignored: before, the second address is user1\'s with wifi-staff noted - a clash between sources',
+      (state['map']['192.0.2.31']['user'], engine.clash(state['map']['192.0.2.31'], T0 + 40, LIFE)),
+      ('user1', ['wifi-staff']))
+check('ignored: no name in Ignore users - nothing changes', engine.forget_ignored(state, set()), [])
+check('ignored: the account in Ignore users, in lower case as settings.py reads it - the address it holds leaves',
+      engine.forget_ignored(state, {'wifi-staff'}), [('left', '192.0.2.30', ('WiFi-Staff', 'ignored'))])
+check('ignored: user1 keeps its address, the note and the clash gone',
+      (sorted(state['map']), state['map']['192.0.2.31']['user'], state['map']['192.0.2.31']['others'],
+       state['map']['192.0.2.31'].get('via'), engine.clash(state['map']['192.0.2.31'], T0 + 40, LIFE)),
+      (['192.0.2.31'], 'user1', {}, {}, []))
+
 # the MAC check
 state = fresh()
 for i, where in enumerate(('192.0.2.20', '192.0.2.21', '192.0.2.22', '2001:db8::20')):

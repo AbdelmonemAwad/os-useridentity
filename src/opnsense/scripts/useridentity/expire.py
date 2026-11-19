@@ -101,6 +101,7 @@ def run(conf=None, now=None, pf=None, macs=None, flush=False):
     with engine.locked():
         state = engine.load()
         changes = engine.expire(state, now, conf['lifetime'])
+        changes += engine.forget_ignored(state, conf['ignore'])
         if flush or not conf['enabled']:
             changes += engine.flush(state)
         else:
