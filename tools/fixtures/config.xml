@@ -78,6 +78,7 @@
         <history_days>0</history_days>
         <alert_silent>30</alert_silent>
         <radius>0</radius>
+        <radius_clients>192.0.2.40,2001:DB8::40,ap-1</radius_clients>
         <portal>0</portal>
       </general>
       <groups>

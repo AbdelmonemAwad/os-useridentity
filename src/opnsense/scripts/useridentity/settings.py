@@ -5,8 +5,9 @@
 #
 """User Identity's settings, read straight out of config.xml by element name: the plugin's own
 (models/OPNsense/UserIdentity/UserIdentity.xml - the names here are not free), the System: Access:
-Servers entry it names for the groups and those that are vouchers, the captive portal's zones, and
-the aliases and the XGS cut list it shares with OPNsense and os-xgs-npu.
+Servers entry it names for the groups - with the realms its users are written with - and those that
+are vouchers, the captive portal's zones, and the aliases and the XGS cut list it shares with OPNsense
+and os-xgs-npu.
 
 Nothing here writes. A config.xml that cannot be read gives the defaults with read False, and every
 caller does nothing it would regret on them: the plugin is off by default.
@@ -61,6 +62,30 @@ def ipv4(text):
     except ValueError:
         return None
     return str(found) if found.version == 4 else None
+
+
+def address_key(text):
+    """An address as one string whatever way it is written - 2001:DB8::40 and 2001:db8:0::40 alike - so a
+    RADIUS client named in Settings and the directory FreeRADIUS names after it compare; anything that
+    is no address, as it is, stripped."""
+    text = str(text or '').strip()
+    try:
+        return str(ipaddress.ip_address(text))
+    except ValueError:
+        return text
+
+
+def realms(entry):
+    """The names a user of the directory is written with besides its bare name, lower case: the domain
+    its base DN names (DC=example,DC=test: example.test) and that domain's first label, 15 characters at
+    most - the name Windows gives a domain for DOMAIN\\name unless it was given another. Empty when the
+    entry is none, or its base DN names no domain."""
+    labels = []
+    for part in str((entry or {}).get('ldap_basedn') or '').split(','):
+        attribute, sep, value = part.partition('=')
+        if sep and attribute.strip().lower() == 'dc' and value.strip():
+            labels.append(value.strip().lower())
+    return {'.'.join(labels), labels[0][:15]} if labels else set()
 
 
 def networks(text):
@@ -118,7 +143,8 @@ def read(path=None):
         'mac_check': True, 'stale': STALE * 60, 'nested': True, 'never_map': [], 'bad_never_map': [],
         'ignore': set(), 'log_names': False, 'history_days': HISTORY_DAYS, 'alert_silent': ALERT_SILENT * 60,
         'groups': [], 'users': [], 'cut_lists': [], 'xgs': False,
-        'radius': False, 'portal': False, 'zones': {}, 'vouchers': set(),
+        'radius': False, 'radius_clients': [], 'bad_radius_clients': [], 'portal': False, 'zones': {},
+        'vouchers': set(), 'realms': set(),
     }
     try:
         root = ET.parse(path or CONFIG).getroot()
@@ -149,8 +175,18 @@ def read(path=None):
         out['history_days'] = _int(_text(general, 'history_days'), HISTORY_DAYS, 0, 365)
         out['alert_silent'] = _int(_text(general, 'alert_silent'), ALERT_SILENT, 0, 10080) * 60
         out['radius'] = _text(general, 'radius', '0') == '1'
+        # the RADIUS clients whose accounting may map, each as FreeRADIUS names its directory: an address
+        for item in items(_text(general, 'radius_clients')):
+            try:
+                key = str(ipaddress.ip_address(item))
+            except ValueError:
+                out['bad_radius_clients'].append(item)
+                continue
+            if key not in out['radius_clients']:
+                out['radius_clients'].append(key)
         out['portal'] = _text(general, 'portal', '0') == '1'
     out['server'] = server(root, out['ldap_server'])
+    out['realms'] = realms(out['server'])
     out['zones'] = zones(root)
     # a voucher is a code anyone may hold, not a user: a portal session it opened maps nothing
     out['vouchers'] = {_text(node, 'name') for node in root.findall('system/authserver')

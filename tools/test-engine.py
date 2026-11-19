@@ -5,7 +5,10 @@
 firewall tells it (host.py, from FreeBSD's own ifconfig, arp and ndp output) and the settings it reads
 (settings.py, from tools/fixtures/config.xml): join, renew, latest wins and the shared mark, the
 lifetime's end, the MAC check, the owner's flush, the tables of groups and of users, the log's counts
-without names, the history, and the lab's A6 - three logons on one client in a row - played through.
+without names, the history, and the lab's A6 - three logons on one client in a row - played through;
+each mapping's source, the clash, a source's logoff - said before a renewal, it ends nothing - a session's
+renewal that takes back no address a later logon took, the RADIUS clients named and the directory's
+realms read from config.xml.
 
     python3 tools/test-engine.py"""
 import json
@@ -384,6 +387,16 @@ conf = settings.read(CONFIG)
 check('settings: RADIUS and the portal off by default; the zones switched on by their id, with their description; '
       'the voucher servers', (conf['radius'], conf['portal'], conf['zones'], conf['vouchers']),
       (False, False, {'0': 'Guests'}, {'Vouchers'}))
+check('settings: the RADIUS clients named, each address written one way, the entry that is none said',
+      (conf['radius_clients'], conf['bad_radius_clients']), (['192.0.2.40', '2001:db8::40'], ['ap-1']))
+check('settings: the directory\'s realms - the domain its base DN names, and its first label', conf['realms'],
+      {'example.test', 'example'})
+check('realms: a base DN deeper than the domain, spaced, in capitals; one that names no domain; no directory',
+      [settings.realms({'ldap_basedn': 'OU=Staff, DC=Corp ,dc=Example,DC=test'}), settings.realms({'ldap_basedn': 'o=example'}),
+       settings.realms(None), settings.realms({'ldap_basedn': 'DC=averyveryverylongname,DC=test'})],
+      [{'corp.example.test', 'corp'}, set(), set(), {'averyveryverylongname.test', 'averyveryverylo'}])
+check('an address as one string, whatever way it is written; what is none, as it is',
+      [settings.address_key(a) for a in ('2001:DB8:0::40', ' 192.0.2.40 ', 'ap-1')], ['2001:db8::40', '192.0.2.40', 'ap-1'])
 
 
 def evk(user, address, when, kind, number='Start'):
