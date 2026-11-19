@@ -7,7 +7,8 @@
 addresses shared, and those two sources clash over - the group and user tables with the addresses pf
 holds in each and whether XGS: Settings cuts on them, the directory's state, each sender's lines and
 refusals - the domain controllers, the RADIUS clients, the captive portal's zones - whether RADIUS
-accounting and the portal's sessions can be read, and syslog-ng's source.
+accounting and the portal's sessions can be read, how many RADIUS clients are named, and syslog-ng's
+source.
 
     status.py        the cards, Groups' and Users' counts, Sources
     status.py map    the Users tab: the live map, one row an address
@@ -119,16 +120,18 @@ def row(kind, address, seen, named):
 
 def sources(conf, found):
     """Each sender's counts for Sources: the domain controllers named first, then any other sender of
-    lines; then, while Settings reads them, each RADIUS client heard and each zone of the captive
-    portal switched on, named by its description."""
+    lines; then, while Settings reads them, each RADIUS client named - heard or not - and any other
+    whose records were read, refused, and each zone of the captive portal switched on, named by its
+    description."""
     out = []
     senders = found.get('senders') or {}
     for address in conf['dcs'] + sorted(set(senders) - set(conf['dcs'])):
         out.append(row('ad', address, senders.get(address) or {}, address in conf['dcs']))
     if conf.get('radius'):
-        clients = found.get('radius') or {}
-        for address in sorted(clients):
-            out.append(row('radius', address, clients[address] or {}, True))
+        clients = {settings.address_key(address): seen for address, seen in (found.get('radius') or {}).items()}
+        named = list(conf.get('radius_clients') or [])
+        for address in named + sorted(set(clients) - set(named)):
+            out.append(row('radius', address, clients.get(address) or {}, address in named))
     if conf.get('portal'):
         zones = found.get('portal') or {}
         for zone in sorted(conf['zones'], key=int):
@@ -164,7 +167,8 @@ def report(now=None, pidfile=None, pfctl=None, project=None):
         'project': os.path.isdir(project or PROJECT), 'xgs': conf['xgs'],
         'counts': {'users': len({r['user'] for r in rows}), 'addresses': len(rows),
                    'shared': sum(1 for r in rows if r['shared']), 'clashes': sum(1 for r in rows if r['clash'])},
-        'radius': {'on': conf['radius'], 'found': os.path.isdir(radius.RADACCT), 'sessions': opened.get('radius', 0)},
+        'radius': {'on': conf['radius'], 'found': os.path.isdir(radius.RADACCT), 'sessions': opened.get('radius', 0),
+                   'clients': len(conf['radius_clients'])},
         'portal': {'on': conf['portal'], 'found': os.path.exists(portal.DB), 'zones': len(conf['zones']),
                    'sessions': opened.get('portal', 0), 'error': (found.get('errors') or {}).get('portal', '')},
         'tables': tables, 'cut': sum(1 for t in tables if t['cut']),

@@ -10,8 +10,8 @@
   one it had leaves the map - another device has it - while Settings has it on;
 - with the plugin off, every mapping forgotten;
 - the mappings a source switched off gave last taken out: RADIUS accounting or the captive portal
-  turned off in Settings, a portal's zone switched off - a domain controller no longer named leaves its
-  mappings to their lifetime;
+  turned off in Settings, a RADIUS client no longer named, a portal's zone switched off - a domain
+  controller no longer named leaves its mappings to their lifetime;
 - every table of the plugin's made again from the map, so one emptied by hand, or written while the
   collector was down, is right within a minute; and the table of an alias of the plugin's switched off -
   kept because a rule or a setting names it - kept empty;
@@ -73,15 +73,17 @@ def silent(conf, now, sources=None, notes=None):
 
 
 def kept(conf):
-    """Whether a mapping's source is still on: RADIUS accounting, the captive portal and the zone of the
-    session - their logoffs are read no more once off. A domain controller's mapping is kept whether its
-    domain controller is still named or not: none ever says a user left, so its mappings end at their
-    lifetime as they would have - a domain controller retired takes no user out of a table at the next
-    minute. Forget every mapping ends them at once."""
+    """Whether a mapping's source is still on: RADIUS accounting and the client named, the captive portal
+    and the zone of the session - their logoffs are read no more once off. A domain controller's mapping
+    is kept whether its domain controller is still named or not: none ever says a user left, so its
+    mappings end at their lifetime as they would have - a domain controller retired takes no user out
+    of a table at the next minute. Forget every mapping ends them at once."""
+    clients = set(conf['radius_clients'])
+
     def keep(entry):
         kind = entry.get('kind', 'ad')
         if kind == 'radius':
-            return conf['radius']
+            return conf['radius'] and settings.address_key(entry.get('source', '')) in clients
         if kind == 'portal':
             return conf['portal'] and entry.get('source', '') in conf['zones']
         return True

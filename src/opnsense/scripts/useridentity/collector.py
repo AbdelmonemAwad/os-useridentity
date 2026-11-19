@@ -13,18 +13,23 @@ Three sources say who is on which address:
 - the domain controllers: syslog-ng hands it each line a domain controller sent as one datagram on
   /var/run/useridentity.sock, "$SOURCEIP $MSG" (syslogng.py). Each line is refused unless its sender
   is a domain controller named in Settings, then read and judged (events.py);
-- RADIUS accounting, with Settings' RADIUS accounting on: the records os-freeradius writes, read each
-  second as they are written (sources/radius.py) - a Start maps, an Interim-Update renews, a Stop ends;
+- RADIUS accounting, with Settings' RADIUS accounting on: the records os-freeradius writes of the
+  RADIUS clients Settings names, read each second as they are written (sources/radius.py) - a Start
+  maps, an Interim-Update renews, a Stop ends;
 - the captive portal, with Settings' Captive portal sessions on: its sessions, read every two seconds
   from its own database (sources/portal.py) - a logon maps, the session's end ends.
 
 What they say is applied in their order, a batch at a time, under the map's lock: the map changes
-(engine.py) - the latest event wins an address, whichever source it came from, and the page shows two
-sources that clash over one - and the tables that changed are written (tables.py). A user whose groups
-are not known, or were asked more than 15 minutes ago, is asked of the directory in a thread of its
-own (ldap_groups.py), whichever source mapped it, so a directory slow to answer never holds the
-sources back; until it answers, the user's addresses are in its user table, if it has one, and in no
-group's.
+(engine.py) - the latest logon wins an address, whichever source it came from, and the page shows two
+sources that clash over one - and the tables that changed are written (tables.py). What was read of
+RADIUS's files and of the portal's sessions is taken as read only once the map is saved: when it
+cannot be (a full /var), the same records and sessions are read again at the next second, and no Stop
+or logout is lost. A user whose groups are not known, or were asked more than 15 minutes ago, is asked
+of the directory in a thread of its own (ldap_groups.py), whichever source mapped it, so a directory
+slow to answer never holds the sources back; until it answers, the user's addresses are in its user
+table, if it has one, and in no group's. With a directory chosen, a RADIUS name of another realm and a
+portal session another server let in are refused before they map: their groups would be those of a
+user of the same name in the directory.
 
 What it counts goes to /var/db/os-useridentity/sources.json for the page: each sender's last line and
 last event - a domain controller, a RADIUS client, a portal's zone - how late its last event came,
@@ -38,6 +43,7 @@ At its start the tables are made again from the map. It never fails: an error is
 log, under useridentity, and it goes on.
 """
 
+import copy
 import errno
 import os
 import queue
@@ -153,6 +159,15 @@ class Sources:
                 entry[change] += 1
             elif change == 'left':
                 entry['ended'] += 1
+
+    def mark(self):
+        """The counts as they stand, to go back to with restore() when what was counted was not applied."""
+        return copy.deepcopy((self.kinds, self.open, self.error))
+
+    def restore(self, mark):
+        self.kinds, self.open, self.error = copy.deepcopy(mark)
+        self.senders = self.kinds['ad']
+        self.dirty = True
 
     def save(self):
         if self.dirty:
@@ -282,9 +297,7 @@ class Collector:
         self.token = 'collector %d %s' % (os.getpid(), os.urandom(4).hex())
         self.radius = radius.Accounting()
         self.radius_at = 0.0
-        if not self.conf['radius']:
-            self.radius.forget()
-            self.radius.save()
+        self.forget_radius()
         # the portal's sessions accepted at the last reading - None until the first: that one also ends
         # what the map holds of the portal and the portal no longer has - and those counted already
         self.portal_seen = None
@@ -300,6 +313,24 @@ class Collector:
         """Whether the directory is asked at all: one chosen and a group row on - a user row needs no group,
         and no directory chosen is no failure to alert about."""
         return bool(self.conf.get('server')) and any(row['enabled'] for row in self.conf['groups'])
+
+    def forget_radius(self):
+        """RADIUS's sessions forgotten when it is switched off, and those of a client no longer named:
+        their records are read no more, and the minute's run takes out what they mapped."""
+        named = set(self.conf['radius_clients'])
+        if not self.conf['radius']:
+            self.radius.forget()
+        else:
+            self.radius.forget(lambda session: settings.address_key(session['client']) in named)
+        self.radius.save(force=True)
+
+    def directory_names(self):
+        """(the realms of the directory's users, the System: Access: Servers entry that is the directory)
+        when one is chosen, else (None, None): what another directory's RADIUS name or portal session is
+        told by."""
+        if not self.conf.get('server'):
+            return None, None
+        return self.conf['realms'], self.conf['ldap_server']
 
     def rows_changed(self):
         """Settings' group rows or Nested changed: what the directory said of each user is kept - so no
@@ -356,21 +387,24 @@ class Collector:
                 os.unlink(self.socket_path)
             except OSError:
                 pass
+        try:
+            self.radius.save(force=True)
+        except OSError as error:
+            log('radius.json could not be written: %s' % error, syslog.LOG_ERR)
         # the pipe is left open: the directory's thread may still be in a question, and a closed descriptor's
         # number given to another file would take its byte; the process ends here
         self.directory.stop()
 
     def refresh(self, now):
         """Settings read again when config.xml changed, the firewall's addresses every minute. A source
-        switched off is read no more: RADIUS's sessions are forgotten, the portal's read afresh when on
-        again; the minute's run takes the mappings they gave last out of the map."""
+        switched off is read no more: RADIUS's sessions are forgotten - those of a client no longer named
+        too - the portal's read afresh when on again; the minute's run takes the mappings they gave last
+        out of the map."""
         mtime = self.config_mtime()
         if mtime != self.mtime:
             self.mtime = mtime
             self.conf = settings.read()
-            if not self.conf['radius']:
-                self.radius.forget()
-                self.radius.save()
+            self.forget_radius()
             if not self.conf['portal']:
                 self.portal_seen = None
                 self.portal_counted = set()
@@ -426,23 +460,43 @@ class Collector:
 
     def poll(self, now):
         """RADIUS's accounting each second and the portal's sessions every two, while Settings has them
-        on, and what they say applied; [change] of the map."""
-        ops, listed = [], None
-        if self.conf['radius'] and now - self.radius_at >= RADIUS_EVERY:
+        on, and what they say applied; [change] of the map. What was read is taken as read only once the
+        map is saved: when apply() fails, RADIUS goes back to where this reading began, and the portal's
+        sessions are weighed against the same ones as before at the next."""
+        ops, listed, mark = [], None, None
+        radius_due = self.conf['radius'] and now - self.radius_at >= RADIUS_EVERY
+        portal_due = self.conf['portal'] and now - self.portal_at >= portal.EVERY
+        if not radius_due and not portal_due:
+            return []
+        # what the page counts goes back too: the same records and sessions are counted again when read again
+        counted = (self.sources.mark(), set(self.portal_counted))
+        if radius_due:
             self.radius_at = now
+            mark = self.radius.mark()
             ops = self.radius_ops(now)
-        if self.conf['portal'] and now - self.portal_at >= portal.EVERY:
+        if portal_due:
             self.portal_at = now
             listed = self.portal_listed(now)
-        if not ops and listed is None:
-            return []
-        return self.apply(ops, now, listed)
+        try:
+            changes = self.apply(ops, now, listed) if ops or listed is not None else []
+        except Exception:
+            if mark is not None:
+                self.radius.restore(mark)
+            self.sources.restore(counted[0])
+            self.portal_counted = counted[1]
+            raise
+        if listed is not None:
+            self.portal_full = now
+        if mark is not None:
+            self.radius.save(now)
+        return changes
 
     def radius_ops(self, now):
         """[operation] of the accounting records written since the last reading, counted for the page."""
         lifetime = self.conf['lifetime']
+        realms, _ = self.directory_names()
         ops = []
-        for item in self.radius.poll(now, lifetime):
+        for item in self.radius.poll(now, lifetime, set(self.conf['radius_clients']), realms):
             verb, client = item[0], item[1]
             if verb == 'line':
                 self.sources.line(client, now, 'radius')
@@ -454,16 +508,17 @@ class Collector:
             elif verb == 'other':
                 self.sources.other(client, item[2], 'radius')
             elif verb == 'end':
-                ops.append(('leave', 'radius', client, item[2], item[3]))
-            elif verb == 'event':
+                # with its own time: a mapping renewed after it is not ended by it
+                ops.append(('leave', 'radius', client, item[2], item[3], item[4]))
+            elif verb in ('event', 'renew'):
                 # read late, a record is still the session's own word: stale only once older than the lifetime
                 reason = events.judge(item[2], now, self.context, stale=lifetime)
                 if reason:
                     self.sources.refused(client, reason, 'radius')
                     continue
                 self.sources.accepted(client, item[2], now)
-                ops.append(('see', 'radius', client, item[2]))
-        self.radius.save()
+                ops.append(('see', 'radius', client, item[2]) if verb == 'event' else
+                           ('renew', 'radius', client, item[2], item[3]))
         self.sources.open['radius'] = len(self.radius.sessions)
         return ops
 
@@ -508,14 +563,15 @@ class Collector:
         self.sources.open['portal'] = len(listed)
         if self.portal_seen is not None and listed == self.portal_seen and now - self.portal_full < portal.RENEW / 2:
             return None
-        self.portal_full = now
         return listed
 
     def apply(self, ops, now, listed=None):
         """[change] of the map after the operations, in their order, as one batch under the map's lock:
-        ('see', kind, sender, event), ('leave', kind, sender, user, address) and ('note', kind, sender,
-        user, address); with listed, the portal's sessions read now, what portal.reconcile() makes of
-        them first. The tables that changed are written, and the users seen asked of the directory."""
+        ('see', kind, sender, event) - a logon, the latest wins - ('renew', kind, sender, event, since) -
+        a RADIUS session's Interim-Update - ('leave', kind, sender, user, address[, when]) and ('note',
+        kind, sender, user, address); with listed, the portal's sessions read now, what
+        portal.reconcile() makes of them first, taken as the portal's last word once the map is saved.
+        The tables that changed are written, and the users seen asked of the directory."""
         if not self.conf['enabled'] or (not ops and listed is None):
             return []
         changes, kinds = [], {}
@@ -524,13 +580,14 @@ class Collector:
             state = self.load()
             if listed is not None:
                 ops = portal.reconcile(state, listed, self.portal_seen, now) + ops
-                self.portal_seen = listed
             for op in ops:
                 verb, kind, sender = op[:3]
                 if verb == 'see':
                     made = engine.see(state, op[3], now, lifetime, sender)
+                elif verb == 'renew':
+                    made = engine.renew(state, op[3], now, lifetime, sender, op[4])
                 elif verb == 'leave':
-                    made = engine.leave(state, op[3], op[4])
+                    made = engine.leave(state, op[3], op[4], when=op[5] if len(op) > 5 else None)
                 else:
                     made = engine.note(state, op[4], op[3], kind, now, lifetime)
                 self.sources.changes(sender, made, kind)
@@ -542,9 +599,11 @@ class Collector:
             if ops:
                 engine.save(state, writer=self.token)
                 self.write_tables(state)
+        if listed is not None:
+            self.portal_seen = listed
         self.after(changes, now, kinds)
         if self.asking():
-            for user in sorted({op[3]['user'] for op in ops if op[0] == 'see'}):
+            for user in sorted({op[3]['user'] for op in ops if op[0] in ('see', 'renew')}):
                 known = self.groups['users'].get(user)
                 if known is None or now - known.get('at', 0) >= CACHE:
                     self.directory.ask(user)

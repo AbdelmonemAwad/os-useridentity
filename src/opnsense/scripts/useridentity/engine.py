@@ -241,7 +241,7 @@ def leave(state, user, where, reason='logoff', when=None):
 
 def drop(state, keep, reason='source off'):
     """The mappings keep(entry) refuses taken out: those a source switched off gave last - RADIUS or
-    the captive portal turned off, a domain controller no longer named."""
+    the captive portal turned off, a RADIUS client no longer named, a portal's zone switched off."""
     changes = []
     for where in sorted(state['map']):
         entry = state['map'][where]

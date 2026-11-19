@@ -8,7 +8,10 @@ collector reading the lab's lines from a datagram socket as syslog-ng hands them
 domain controller's lines and refusals, mapping, asking the directory in its own thread and writing
 the tables; the minute's run - the lifetime's end, the MAC check, the tables made again, the flush;
 the alerts - a domain controller silent, the directory failing, an address newly shared - kept 24
-hours and 100 at most; and what status.py gives the page.
+hours and 100 at most; RADIUS accounting and the captive portal read by the collector - a client not
+named, a device that roams, a Stop read late, an Interim-Update that takes back no address, the map
+not saved and the same read again, another directory, a client and a domain controller taken out of
+Settings; and what status.py gives the page.
 
     python3 tools/test-service.py"""
 import json
@@ -528,12 +531,13 @@ try:
                           project=os.path.join(TMP, 'xgs'))
     check('status: the clash counted, RADIUS and the portal on and read, their sessions open',
           (shown['counts']['clashes'], shown['radius'], shown['portal']),
-          (1, {'on': True, 'found': True, 'sessions': 1},
+          (1, {'on': True, 'found': True, 'sessions': 1, 'clients': 2},
            {'on': True, 'found': True, 'zones': 1, 'sessions': 1, 'error': ''}))
-    check('status: Sources - the domain controllers, then the RADIUS client, then the portal\'s zone by its description',
+    check('status: Sources - the domain controllers, then the RADIUS clients named - one silent - then the portal\'s '
+          'zone by its description',
           [(s['kind'], s['address'], s['hostname'], s['accepted'], s['ended']) for s in shown['sources']],
           [('ad', '192.0.2.10', 'DC1.example.test', 1, 0), ('ad', '192.0.2.11', '', 0, 0), ('ad', '192.0.2.2', '', 0, 0),
-           ('radius', '192.0.2.40', 'ap1', 2, 1), ('portal', '0', 'Guests', 1, 0)])
+           ('radius', '192.0.2.40', 'ap1', 2, 1), ('radius', '2001:db8::40', '', 0, 0), ('portal', '0', 'Guests', 1, 0)])
     zone = [s for s in shown['sources'] if s['kind'] == 'portal'][0]
     check('status: the zone\'s refusals by reason - the zone switched off\'s session not read at all',
           (zone['lines'], zone['reasons']), (2, {'voucher': 1}))
@@ -579,9 +583,124 @@ try:
           (1, [('192.0.2.88', 'ad')]))
     again.close()
     both.close()
+
+    # the review's findings, through the collector: a client not named, a device that roams, a Stop read late, a
+    # shared account's Interim-Update after a domain logon, /var full, another directory, a client and a domain
+    # controller taken out of Settings
+    radius.RADACCT, radius.STATE = os.path.join(TMP, 'radacct-2'), state + '/radius-2.json'
+    both_on = plain.replace('<radius>0</radius>', '<radius>1</radius>').replace('<portal>0</portal>', '<portal>1</portal>')
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(both_on)
+    os.utime(config, (time.time() + 60, time.time() + 60))
+    engine.save({'map': {}})
+    sessions([])
+    pf = FakePf()
+    now = 1795110000.0
+    fix = collector.Collector(socket_path=os.path.join(TMP, 'fix.sock'), pf=collector.tables.Pf(run=pf), ldap3=module,
+                              now=now, addresses=lambda: ({'192.0.2.1'}, {'192.0.2.255'}))
+
+    def write(client, status_type, user, address, stamp, session, nas):
+        path = os.path.join(radius.RADACCT, client, 'detail-20261119')
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'a', encoding='utf-8') as handle:
+            handle.write('Thu Nov 19 16:00:00 2026\n' + ('\tUser-Name = "%s"\n' % user if user else '') +
+                         '\tAcct-Status-Type = %s\n' % status_type +
+                         ('\tFramed-IP-Address = %s\n' % address if address else '') +
+                         '\tNAS-IP-Address = %s\n\tAcct-Unique-Session-Id = "%s"\n\tTimestamp = %d\n\n' % (nas, session, stamp))
+        os.utime(path, (stamp, stamp))
+
+    write('192.0.2.41', 'Start', 'ceo', '192.0.2.80', int(now), 'x1', '192.0.2.41')
+    check('a RADIUS client not named in Settings: its Start maps nothing, whatever name the device gives - refused '
+          'and counted', (fix.poll(now + 1), fix.sources.kinds['radius']['192.0.2.41']['refused']),
+          ([], {'not a named client': 1}))
+    check('... Sources: the clients named, then the one heard that is not',
+          [(s['address'], s['named']) for s in status.sources(settings.read(), {'radius': fix.sources.kinds['radius']})
+           if s['kind'] == 'radius'], [('192.0.2.40', True), ('2001:db8::40', True), ('192.0.2.41', False)])
+
+    write('192.0.2.40', 'Start', 'user1', '192.0.2.77', int(now) + 10, 'r1', '192.0.2.40')
+    fix.poll(now + 11)
+    write('2001:db8::40', 'Start', 'user1', '192.0.2.77', int(now) + 20, 'r2', '192.0.2.42')
+    check('roaming: the Start at ap2, a client named by its IPv6 address - renewed', fix.poll(now + 21),
+          [('renewed', '192.0.2.77', 'user1')])
+    write('192.0.2.40', 'Stop', 'user1', '192.0.2.77', int(now) + 25, 'r1', '192.0.2.40')
+    check('... ap1\'s Stop five seconds later: the address stays mapped, and in its table - no cut when the next '
+          'Interim-Update would have put it back', (fix.poll(now + 26), engine.load()['map']['192.0.2.77']['user'],
+                                                      pf.held.get('uid_usr_user1')), ([], 'user1', {'192.0.2.77'}))
+    write('2001:db8::40', 'Stop', 'user1', '192.0.2.77', int(now) + 40, 'r2', '192.0.2.42')
+    check('... ap2\'s Stop takes it out', fix.poll(now + 41), [('left', '192.0.2.77', ('user1', 'logoff'))])
+
+    fix.receive([logon_line('runas-user1', now + 50, '192.0.2.78')], now + 51)
+    write('192.0.2.40', 'Stop', 'user1', '192.0.2.78', int(now) - 3600, 'old', '192.0.2.40')
+    check('a Stop read late, an hour older than a domain controller\'s logon a second before: nothing ends',
+          (fix.poll(now + 52), engine.load()['map']['192.0.2.78']['kind']), ([], 'ad'))
+
+    write('192.0.2.40', 'Start', 'wifi-staff', '192.0.2.79', int(now) + 60, 'w1', '192.0.2.40')
+    fix.poll(now + 61)
+    fix.receive([logon_line('runas-user1', now + 70, '192.0.2.79')], now + 71)
+    write('192.0.2.40', 'Interim-Update', 'wifi-staff', '192.0.2.79', int(now) + 660, 'w1', '192.0.2.40')
+    changes = fix.poll(now + 661)
+    row = [r for r in status.mapped(engine.load(), {}, settings.read(), now + 662) if r['address'] == '192.0.2.79'][0]
+    check('a shared account\'s Interim-Update after a domain logon on its address: no take-back - the address stays '
+          'the domain user\'s, the clash shown', (changes, row['user'], row['clash'], row['others']),
+          ([], 'user1', True, [{'user': 'wifi-staff', 'kind': 'radius'}]))
+    write('192.0.2.40', 'Interim-Update', 'wifi-staff', '192.0.2.79', int(now) + 1260, 'w1', '192.0.2.40')
+    check('... nor at the next', (fix.poll(now + 1261), engine.load()['map']['192.0.2.79']['user']), ([], 'user1'))
+
+    write('192.0.2.40', 'Start', 'user7', '192.0.2.81', int(now) + 1300, 's7', '192.0.2.40')
+    sessions([(0, 'p', 'Example directory', 'user2', '192.0.2.88', '', now + 1300, 0)])
+    fix.poll(now + 1301)
+    check('user7 by RADIUS, user2 by the portal', sorted((w, e['user']) for w, e in engine.load()['map'].items()
+                                                         if w in ('192.0.2.81', '192.0.2.88')),
+          [('192.0.2.81', 'user7'), ('192.0.2.88', 'user2')])
+    write('192.0.2.40', 'Stop', 'user7', '192.0.2.81', int(now) + 1310, 's7', '192.0.2.40')
+    sessions([])
+    ended = (fix.sources.kinds['radius']['192.0.2.40']['ended'], fix.sources.kinds['portal']['0']['ended'],
+             fix.sources.kinds['radius']['192.0.2.40']['lines'])
+    saved = engine.save
+
+    def full(*args, **kwargs):
+        raise OSError(28, 'No space left on device')
+
+    engine.save = full
+    try:
+        fix.poll(now + 1311)
+        raised = False
+    except OSError:
+        raised = True
+    finally:
+        engine.save = saved
+    check('/var full while a Stop and a portal logout come: the map not saved, the reading raises', raised, True)
+    check('... at the next reading both are read again, and applied',
+          sorted(fix.poll(now + 1313)), [('left', '192.0.2.81', ('user7', 'logoff')), ('left', '192.0.2.88', ('user2', 'logoff'))])
+    check('... and counted once on the page: the Stop\'s record, its end and the logout\'s',
+          (fix.sources.kinds['radius']['192.0.2.40']['ended'], fix.sources.kinds['portal']['0']['ended'],
+           fix.sources.kinds['radius']['192.0.2.40']['lines']), (ended[0] + 1, ended[1] + 1, ended[2] + 1))
+
+    write('192.0.2.40', 'Start', 'user1@partner.example', '192.0.2.82', int(now) + 1320, 'p1', '192.0.2.40')
+    check('another directory: a RADIUS name of another realm maps nothing, counted',
+          (fix.poll(now + 1321), fix.sources.kinds['radius']['192.0.2.40']['refused'].get('another directory')), ([], 1))
+
+    write('192.0.2.40', 'Start', 'user8', '192.0.2.83', int(now) + 1330, 's8', '192.0.2.40')
+    fix.poll(now + 1331)
+    with open(config, 'w', encoding='utf-8') as handle:
+        handle.write(both_on.replace('192.0.2.40,2001:DB8::40', '2001:DB8::40')
+                     .replace('<domain_controllers>192.0.2.10,', '<domain_controllers>'))
+    os.utime(config, (time.time() + 70, time.time() + 70))
+    fix.refresh(now + 1332)
+    check('a RADIUS client taken out of Settings: its sessions forgotten',
+          [k for k, v in fix.radius.sessions.items() if v['client'] == '192.0.2.40'], [])
+    out = expire.run(settings.read(), now=now + 1340, pf=collector.tables.Pf(run=pf), macs=lambda: {})
+    check('... the minute\'s run takes out what it mapped; a domain controller taken out leaves its mappings to their '
+          'lifetime, as they were made true',
+          (out['off'], sorted((w, e['kind']) for w, e in engine.load()['map'].items())),
+          (1, [('192.0.2.78', 'ad'), ('192.0.2.79', 'ad')]))
+    fix.close()
+    check('the collector stopped: radius.json says where the reading stood',
+          sorted(os.path.basename(path) for path in engine.read_json(radius.STATE, {})['files']),
+          ['detail-20261119', 'detail-20261119', 'detail-20261119'])
     with open(config, 'w', encoding='utf-8') as handle:
         handle.write(plain)
-    os.utime(config, (time.time() + 50, time.time() + 50))
+    os.utime(config, (time.time() + 80, time.time() + 80))
 
     # the minute's run
     pf = FakePf()

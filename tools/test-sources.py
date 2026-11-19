@@ -7,12 +7,15 @@ accounting as os-freeradius writes it, and the captive portal's sessions as its 
 RADIUS: the three records phase 0's lab had FreeRADIUS write for its A9 - Start, Interim-Update, Stop,
 in tools/fixtures/radacct-detail.txt, the address made a documentation one - and records made from
 them: the detail file's quoting, a record still being written, its time (FreeRADIUS's Timestamp less
-Acct-Delay-Time, or its first line), each status by name and by number, what is refused and why - no
-status, no time, nobody, anonymous, a computer, a MAC address as the name - the sessions an
-Interim-Update renews, a Stop ends, a new address replaces, Accounting-On and -Off end for their NAS
-alone; and the files read as they grow: a file never read taken whole when written within the lifetime,
-else from its end, what was read kept across a restart, one cut short or made again read from its
-start, one gone forgotten, a large one read a part at a time.
+Acct-Delay-Time, or its first line), each status by name and by number, what is refused and why - a
+client not named, no status, no time, nobody, anonymous, a computer, a MAC address as the name, a realm
+of another directory - the sessions an Interim-Update renews, a Stop ends, a new address replaces, a
+Stop that another session of the same user holds the address against (a device that roamed),
+Accounting-On and -Off ending the sessions of the NAS they name - behind a server that forwards several,
+that NAS's alone; and the files read as they grow: only the days a record within the lifetime is in, a
+file never read taken whole when written within the lifetime, else from its end, what was read kept
+across a restart, one cut short or made again read from its start, one gone forgotten, a large one read
+a part at a time, radius.json written at most every ten seconds, and where the reading stood put back.
 
 The portal: a database with the tables of OPNsense core's captiveportal (cp_clients, cp_client_ips) -
 the sessions of the zones switched on, not those deleted, each with its roaming addresses; a database
@@ -97,9 +100,21 @@ def record(status='Start', user='u1', address='192.0.2.77', stamp=1794950505, se
 
 
 status, found = radius.interpret('192.0.2.40', '', record(**{'NAS-Identifier': 'ap1', 'Framed-IPv6-Address': '2001:db8::77'}))
-check('interpret: a Start - its user, both addresses, the NAS by its identifier, the session',
-      (status, found['name'], found['user'], found['addresses'], found['hostname'], found['session'], found['nas']),
-      ('start', 'Start', 'u1', ['192.0.2.77', '2001:db8::77'], 'ap1', 's1', '192.0.2.40'))
+check('interpret: a Start - its user, both addresses, the NAS by its identifier, the session, its client and its NAS',
+      (status, found['name'], found['user'], found['addresses'], found['hostname'], found['session'], found['client'],
+       found['nas']),
+      ('start', 'Start', 'u1', ['192.0.2.77', '2001:db8::77'], 'ap1', 's1', '192.0.2.40', ['192.0.2.40', '', 'ap1']))
+check('the NAS: its IPv6 address written as the firewall writes it, one it does not give empty',
+      radius.nas_of({'NAS-IPv6-Address': '2001:DB8:0::5', 'NAS-Identifier': ' sw-1 '}), ['', '2001:db8::5', 'sw-1'])
+check('same NAS: by any of the three, none different; a record or a session that names none is its client\'s',
+      [radius.same_nas(['198.51.100.1', '', 'sw-1'], ['198.51.100.1', '', '']),
+       radius.same_nas(['198.51.100.1', '', 'sw-1'], ['', '', 'sw-1']),
+       radius.same_nas(['198.51.100.1', '', 'sw-1'], ['198.51.100.2', '', '']),
+       radius.same_nas(['198.51.100.1', '', 'sw-1'], ['198.51.100.1', '', 'sw-2']),
+       radius.same_nas(['198.51.100.1', '', ''], ['', '', 'sw-1']),
+       radius.same_nas(['198.51.100.1', '', ''], ['', '', '']),
+       radius.same_nas(['', '', ''], ['198.51.100.3', '', ''])],
+      [True, True, False, False, False, True, True])
 check('interpret: each status, by name and by number', [radius.interpret('c', '', record(status=s))[0] for s in (
     'Interim-Update', 'Alive', '3', 'Stop', '2', 'Accounting-On', '7', 'Accounting-Off', '8', '1')],
       ['interim', 'interim', 'interim', 'stop', 'stop', 'on', 'on', 'off', 'off', 'start'])
@@ -132,21 +147,22 @@ with tempfile.TemporaryDirectory() as tmp:
         return [i for i in acct.take(client, '', found, T, LIFE) if i[0] != 'line' and i[0] != 'heard']
 
     out = take(record())
-    check('a Start: the event for its address', [(i[0], i[2]['address'], i[2]['kind'], i[2]['id']) for i in out],
+    check('a Start: the event for its address - a logon', [(i[0], i[2]['address'], i[2]['kind'], i[2]['id']) for i in out],
           [('event', '192.0.2.77', 'radius', 'Start')])
-    check('a Start: the session kept', acct.sessions['s1'], {'nas': '192.0.2.40', 'user': 'u1', 'addresses': ['192.0.2.77'],
-                                                            'last': T})
+    check('a Start: the session kept, with its client, its NAS and its logon\'s time', acct.sessions['s1'],
+          {'client': '192.0.2.40', 'nas': ['192.0.2.40', '', ''], 'user': 'u1', 'addresses': ['192.0.2.77'],
+           'since': T, 'last': T})
     out = take(record(status='Interim-Update', address=None, stamp=T + 600))
-    check('an Interim-Update without an address renews the one the session had',
-          [(i[0], i[2]['address'], i[2]['time']) for i in out], [('event', '192.0.2.77', T + 600)])
+    check('an Interim-Update without an address renews the one the session had - a renewal, since its logon',
+          [(i[0], i[2]['address'], i[2]['time'], i[3]) for i in out], [('renew', '192.0.2.77', T + 600, T)])
     out = take(record(status='Interim-Update', address='192.0.2.78', stamp=T + 700))
     check('an Interim-Update with another address: the old one ends, the new one maps',
           [(i[0], i[3] if i[0] == 'end' else i[2]['address']) for i in out], [('end', '192.0.2.77'), ('event', '192.0.2.78')])
     out = take(record(status='Stop', address=None, stamp=T + 800))
-    check('a Stop without an address ends the session\'s', (out, 's1' in acct.sessions),
-          ([('end', '192.0.2.40', 'u1', '192.0.2.78')], False))
+    check('a Stop without an address ends the session\'s, with the Stop\'s own time', (out, 's1' in acct.sessions),
+          ([('end', '192.0.2.40', 'u1', '192.0.2.78', T + 800)], False))
     out = take(record(status='Stop', address='192.0.2.79', session='never-seen'))
-    check('a Stop of a session never seen ends its own address', out, [('end', '192.0.2.40', 'u1', '192.0.2.79')])
+    check('a Stop of a session never seen ends its own address', out, [('end', '192.0.2.40', 'u1', '192.0.2.79', T)])
     out = take(record(address=None, session='s2'))
     check('a Start with no address: refused, the session kept for its Interim-Update',
           (out, acct.sessions['s2']['addresses']), ([('refused', '192.0.2.40', 'no address')], []))
@@ -159,15 +175,122 @@ with tempfile.TemporaryDirectory() as tmp:
           [(i[0], i[2] if i[0] == 'end' else i[2]['user']) for i in out], [('end', 'u1'), ('event', 'u9')])
     take(record(address='198.51.100.7', session='s4'), client='198.51.100.1')
     out = acct.take('192.0.2.40', '', record(status='Accounting-On', user=None, address=None), T, LIFE)
-    check('Accounting-On: every session of its NAS ends, the other NAS\'s kept, counted among the others',
+    check('Accounting-On: every session of the NAS it names ends, another client\'s kept, counted among the others',
           ([i for i in out if i[0] in ('end', 'other')], sorted(acct.sessions)),
-          ([('other', '192.0.2.40', 'Accounting-On'), ('end', '192.0.2.40', 'u9', '192.0.2.80'),
-            ('end', '192.0.2.40', 'u1', '127.0.0.1')], ['s4']))
+          ([('other', '192.0.2.40', 'Accounting-On'), ('end', '192.0.2.40', 'u9', '192.0.2.80', T),
+            ('end', '192.0.2.40', 'u1', '127.0.0.1', T)], ['s4']))
     acct.save()
     check('the sessions kept in radius.json, 0640', (json.load(open(acct.path))['sessions']['s4']['user'],
                                                      oct(os.stat(acct.path).st_mode & 0o777)), ('u1', '0o640'))
     acct.poll(T + LIFE + 1, LIFE)
     check('a session with no record for longer than the lifetime forgotten', acct.sessions, {})
+
+    # which clients may map (the review's fifth finding, and its first: the name a NAS reports with EAP is the
+    # device's own outer name - student1 giving 'ceo' - so nothing maps from a client the owner has not named)
+    gate = radius.Accounting(path=os.path.join(tmp, 'gate.json'), folder=os.path.join(tmp, 'none'))
+    out = gate.take('192.0.2.41', '', record(user='ceo', address='192.0.2.80'), T, LIFE, clients={'192.0.2.40'})
+    check('a client not named: refused before anything else is read of its record, no session kept',
+          (out, gate.sessions), ([('line', '192.0.2.41'), ('refused', '192.0.2.41', 'not a named client')], {}))
+    out = gate.take('192.0.2.40', '', record(user='ceo', address='192.0.2.80'), T, LIFE, clients=set())
+    check('none named: no record maps, whatever name it gives', [i[0] for i in out], ['line', 'refused'])
+    out = gate.take('192.0.2.41', '', record(status='Accounting-Off', user=None, address=None), T, LIFE,
+                    clients={'192.0.2.40'})
+    check('... nor does a client not named end anything', [i[0] for i in out], ['line', 'refused'])
+    out = gate.take('2001:DB8::40', '', record(session='v6'), T, LIFE, clients={'2001:db8::40'})
+    check('a client named by its IPv6 address, its directory written another way: the same client',
+          [i[0] for i in out], ['line', 'heard', 'event'])
+
+    # another directory (the review's fourth finding): with a directory chosen, a realm or a domain not its own
+    realms = {'example.test', 'example'}
+    said = []
+    for name in ('jsmith@partner.example', 'PARTNER\\jsmith', 'jsmith@example.test', 'EXAMPLE\\jsmith', 'jsmith'):
+        out = gate.take('192.0.2.40', '', record(user=name, session='d-' + name), T, LIFE, realms=realms)
+        said.append([i[2] if i[0] == 'refused' else i[0] for i in out if i[0] != 'line'][0])
+    out = gate.take('192.0.2.40', '', record(status='Stop', user='jsmith@partner.example', session='d-x'), T, LIFE,
+                    realms=realms)
+    check('another directory: a name of another realm or domain refused - its Stop too, which ends nothing; the '
+          'directory\'s own realm, its domain and a bare name taken',
+          (said, [i[0] for i in out]), (['another directory', 'another directory', 'heard', 'heard', 'heard'],
+                                        ['line', 'refused']))
+    out = gate.take('192.0.2.40', '', record(user='jsmith@partner.example', session='d-y'), T, LIFE, realms=None)
+    check('... no directory chosen: no realm refused', [i[0] for i in out], ['line', 'heard', 'event'])
+
+    # a device that roams (the review's second finding, case A): ap2's Start, then ap1's Stop five seconds later
+    roam = radius.Accounting(path=os.path.join(tmp, 'roam.json'), folder=os.path.join(tmp, 'none'))
+    roam.take('192.0.2.40', '', record(user='alice', session='r1', stamp=T), T, LIFE)
+    roam.take('192.0.2.41', '', record(user='alice', session='r2', stamp=T + 5, **{'NAS-IP-Address': '192.0.2.41'}),
+              T, LIFE)
+    out = roam.take('192.0.2.40', '', record(status='Stop', user='alice', session='r1', stamp=T + 10), T, LIFE)
+    check('roaming: ap1\'s Stop after ap2\'s Start ends nothing - ap2\'s open session of the same user holds the address',
+          ([i for i in out if i[0] == 'end'], sorted(roam.sessions)), ([], ['r2']))
+    out = roam.take('192.0.2.41', '', record(status='Stop', user='alice', session='r2', stamp=T + 20), T, LIFE)
+    check('... ap2\'s Stop ends it', [i for i in out if i[0] == 'end'],
+          [('end', '192.0.2.41', 'alice', '192.0.2.77', T + 20)])
+    roam.take('192.0.2.40', '', record(user='bob', address='192.0.2.78', session='r3', stamp=T), T, LIFE)
+    roam.take('192.0.2.40', '', record(user='carol', address='192.0.2.78', session='r4', stamp=T + 1), T, LIFE)
+    out = roam.take('192.0.2.40', '', record(status='Stop', user='bob', address='192.0.2.78', session='r3',
+                                             stamp=T + 2), T, LIFE)
+    check('... another user\'s session on the address holds nothing for this one: its Stop ends it (the map decides)',
+          [i for i in out if i[0] == 'end'], [('end', '192.0.2.40', 'bob', '192.0.2.78', T + 2)])
+
+    # Accounting-On/-Off of one NAS behind a RADIUS server that forwards three (the review's third finding)
+    fwd = radius.Accounting(path=os.path.join(tmp, 'fwd.json'), folder=os.path.join(tmp, 'none'))
+    for n, user in ((1, 'alice'), (2, 'bob'), (3, 'carol')):
+        fwd.take('192.0.2.5', '', record(user=user, address='192.0.2.6%d' % n, session='f%d' % n,
+                                         **{'NAS-IP-Address': '198.51.100.%d' % n, 'NAS-Identifier': 'switch-%d' % n}),
+                 T, LIFE)
+    out = fwd.take('192.0.2.5', '', record(status='Accounting-On', user=None, address=None, stamp=T + 30,
+                                            **{'NAS-IP-Address': '198.51.100.3'}), T, LIFE)
+    check('Accounting-On of switch-3 behind a forwarding server: only switch-3\'s session ends, the others go on',
+          ([i for i in out if i[0] == 'end'], sorted(fwd.sessions)),
+          ([('end', '192.0.2.5', 'carol', '192.0.2.63', T + 30)], ['f1', 'f2']))
+    out = fwd.take('192.0.2.5', '', {'Acct-Status-Type': 'Accounting-Off', 'Timestamp': str(int(T + 40)),
+                                     'NAS-Identifier': 'switch-2'}, T, LIFE)
+    check('... Accounting-Off naming its NAS by NAS-Identifier alone: that NAS\'s', [i[2] for i in out if i[0] == 'end'],
+          ['bob'])
+    out = fwd.take('192.0.2.5', '', {'Acct-Status-Type': 'Accounting-On', 'Timestamp': str(int(T + 50))}, T, LIFE)
+    check('... one that names no NAS: every session of its client', ([i[2] for i in out if i[0] == 'end'], fwd.sessions),
+          (['alice'], {}))
+
+    # an Interim-Update is a renewal of what its session had, not a new logon (the review's ninth finding)
+    again = radius.Accounting(path=os.path.join(tmp, 'again.json'), folder=os.path.join(tmp, 'none'))
+    again.take('192.0.2.40', '', record(user='wifi-staff', address='192.0.2.80', session='w1', stamp=T), T, LIFE)
+    out = again.take('192.0.2.40', '', record(status='Interim-Update', user='wifi-staff', address='192.0.2.80',
+                                              session='w1', stamp=T + 600), T, LIFE)
+    check('an Interim-Update of the address its session had: a renewal, with the session\'s logon time',
+          [(i[0], i[3]) for i in out if i[0] in ('event', 'renew')], [('renew', T)])
+    out = again.take('192.0.2.40', '', record(status='Interim-Update', user='wifi-staff', address='192.0.2.81',
+                                              session='w1', stamp=T + 1200), T, LIFE)
+    check('... of an address it did not have: a logon there, the old one ends',
+          [(i[0], i[3] if i[0] == 'end' else i[2]['address']) for i in out if i[0] in ('event', 'renew', 'end')],
+          [('end', '192.0.2.80'), ('event', '192.0.2.81')])
+    out = again.take('192.0.2.40', '', record(status='Interim-Update', user='u2', address='192.0.2.81', session='w9',
+                                              stamp=T + 1300), T, LIFE)
+    check('... of a session never seen: a logon', [i[0] for i in out if i[0] in ('event', 'renew')], ['event'])
+
+    # where the reading stands, put back when what was read could not be put in the map (the review's eighth finding)
+    before = again.mark()
+    again.take('192.0.2.40', '', record(status='Stop', user='wifi-staff', address=None, session='w1', stamp=T + 1400),
+               T, LIFE)
+    check('mark, then a Stop: the session gone', 'w1' in again.sessions, False)
+    again.restore(before)
+    check('... restore: the session open again, to be ended by the same Stop read again',
+          again.sessions['w1']['addresses'], ['192.0.2.81'])
+
+    # radius.json written at most every ten seconds while records come, and at the end (the review's sixth finding)
+    writes = radius.Accounting(path=os.path.join(tmp, 'writes.json'), folder=os.path.join(tmp, 'none'))
+    times = []
+    for second, user in ((0, 'a1'), (3, 'a2'), (9, 'a3'), (10, 'a4'), (15, 'a5')):
+        writes.take('192.0.2.40', '', record(user=user, session=user), T, LIFE)
+        writes.save(T + second)
+        times.append(sorted(engine.read_json(writes.path, {}).get('sessions', {})))
+    check('radius.json written at the first record, then not again within ten seconds, then again',
+          times, [['a1'], ['a1'], ['a1'], ['a1', 'a2', 'a3', 'a4'], ['a1', 'a2', 'a3', 'a4']])
+    writes.save(T + 16, force=True)
+    check('... and whatever is left when the collector stops', sorted(engine.read_json(writes.path, {})['sessions']),
+          ['a1', 'a2', 'a3', 'a4', 'a5'])
+    writes.save(T + 30)
+    check('... nothing new, nothing written', writes.dirty, False)
 
     # the files, read as they grow
     folder = os.path.join(tmp, 'radacct')
@@ -178,25 +301,37 @@ with tempfile.TemporaryDirectory() as tmp:
         handle.write(LAB)
     now = 1794950600.0
     os.utime(today, (now - 10, now - 10))
-    old = os.path.join(folder, '192.0.2.40', 'detail-20261110')
-    with open(old, 'w', encoding='utf-8') as handle:
+    yesterday = os.path.join(folder, '192.0.2.40', 'detail-20261116')
+    with open(yesterday, 'w', encoding='utf-8') as handle:
         handle.write(LAB.replace('192.0.2.77', '192.0.2.99'))
-    os.utime(old, (now - 7 * 86400, now - 7 * 86400))
+    os.utime(yesterday, (now - 20 * 3600, now - 20 * 3600))
+    # nothing takes old files away: a day a week before, and what an owner compressed, are never read
+    old = os.path.join(folder, '192.0.2.40', 'detail-20261110')
+    for path in (old, today + '.gz', os.path.join(folder, '127.0.0.1', 'reply-detail-20261117')):
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write(LAB.replace('192.0.2.77', '192.0.2.98'))
+        os.utime(path, (now - 10, now - 10))
     state = os.path.join(tmp, 'state.json')
     acct = radius.Accounting(path=state, folder=folder)
     check('found: the accounting directory there', (acct.found(), radius.Accounting(folder=os.path.join(tmp, 'none')).found()),
           (True, False))
+    check('the days read: from the day before the lifetime began to the day after today',
+          sorted(radius.days(now, LIFE)), ['detail-20261116', 'detail-20261117', 'detail-20261118'])
     got = acct.read(now, LIFE)
-    check('a file never read, written within the lifetime: read whole, in order; one written a week ago: from its end',
-          [(c, f['Acct-Status-Type']) for c, _, f in got], [('127.0.0.1', 'Start'), ('127.0.0.1', 'Interim-Update'),
-                                                           ('127.0.0.1', 'Stop')])
+    check('a file never read, written within the lifetime: read whole, in order; yesterday\'s, written 20 hours ago: '
+          'from its end; a day past the lifetime, a compressed file, another module\'s: not read at all',
+          [(c, f['Acct-Status-Type'], f['Framed-IP-Address']) for c, _, f in got],
+          [('127.0.0.1', 'Start', '192.0.2.77'), ('127.0.0.1', 'Interim-Update', '192.0.2.77'),
+           ('127.0.0.1', 'Stop', '192.0.2.77')])
+    check('... and only the files of the days read kept in radius.json, however many there are',
+          sorted(os.path.basename(p) for p in acct.files), ['detail-20261116', 'detail-20261117'])
     check('read again: nothing new', acct.read(now + 1, LIFE), [])
-    with open(old, 'a', encoding='utf-8') as handle:
+    with open(yesterday, 'a', encoding='utf-8') as handle:
         handle.write(LAB.split('\n\n')[0].replace('"u1"', '"u5"') + '\n\nTue Nov 17 21:30:00 2026\n\tUser-Name = "u6"\n')
     got = acct.read(now + 2, LIFE)
-    check('the file written a week ago, written to again: only what came since, the record being written left',
+    check('the file written 20 hours ago, written to again: only what came since, the record being written left',
           [f['User-Name'] for _, _, f in got], ['u5'])
-    with open(old, 'a', encoding='utf-8') as handle:
+    with open(yesterday, 'a', encoding='utf-8') as handle:
         handle.write('\tAcct-Status-Type = Start\n\n')
     check('... and taken once it is whole', [f['User-Name'] for _, _, f in acct.read(now + 3, LIFE)], ['u6'])
     acct.save()
@@ -209,9 +344,14 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(today, 'w', encoding='utf-8') as handle:
         handle.write(LAB + LAB)
     check('a file made again under the same name: read from its start', len(again.read(now + 6, LIFE)), 6)
-    os.unlink(old)
+    os.unlink(yesterday)
     again.read(now + 7, LIFE)
     check('a file gone: forgotten', sorted(os.path.basename(p) for p in again.files), ['detail-20261117'])
+    later = radius.Accounting(path=os.path.join(tmp, 'later.json'), folder=folder)
+    later.files = dict(again.files)
+    later.read(now + 3 * 86400, LIFE)
+    check('three days on: the file of a day past the lifetime forgotten, never read again',
+          sorted(os.path.basename(p) for p in later.files), [])
     big = os.path.join(folder, '192.0.2.40', 'detail-20261118')
     with open(big, 'w', encoding='utf-8') as handle:
         handle.write(LAB * 20)
@@ -231,10 +371,10 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(os.path.join(tmp, 'lab', '127.0.0.1', 'detail-20261117'), 'w', encoding='utf-8') as handle:
         handle.write(LAB)
     os.utime(os.path.join(tmp, 'lab', '127.0.0.1', 'detail-20261117'), (now, now))
-    done = [i for i in out.poll(now, LIFE) if i[0] in ('event', 'end')]
+    done = [i for i in out.poll(now, LIFE) if i[0] in ('event', 'renew', 'end')]
     check('the lab\'s A9 played through: the Start maps, the Interim-Update renews, the Stop ends',
-          [(i[0], i[2]['id'] if i[0] == 'event' else i[3]) for i in done],
-          [('event', 'Start'), ('event', 'Interim-Update'), ('end', '192.0.2.77')])
+          [(i[0], i[3] if i[0] == 'end' else i[2]['id']) for i in done],
+          [('event', 'Start'), ('renew', 'Interim-Update'), ('end', '192.0.2.77')])
 
 # the portal's database
 SCHEMA = '''

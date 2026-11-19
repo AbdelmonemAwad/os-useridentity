@@ -22,34 +22,58 @@ attribute a line, each after a tab, then an empty line:
             Acct-Unique-Session-Id = "38950487608e4f75190df8111cf4a78a"
             Timestamp = 1794950509
 
-A request reaches the detail module only from a client FreeRADIUS knows, by the secret the two share:
-the clients of Services: FreeRADIUS are the gate here, as the redirect is the domain controllers'. A
-NAS, or another RADIUS server that forwards its accounting to this one, is one of them.
+Which clients may map: only those Settings names in RADIUS clients, by their address - the name of
+their directory. A request reaches the detail module only from a client FreeRADIUS knows, by the
+secret the two share, but a client of Services: FreeRADIUS may be a whole network sharing one secret,
+and the name a record carries is the one its NAS reports: with EAP - PEAP, TTLS, TLS, most 802.1X -
+the outer name the device itself gives, anything its user types, unless FreeRADIUS checks it against
+the name it authenticated or returns that one to the NAS in the Access-Accept (RFC 2865 5.1, RFC 3579
+2.1). os-freeradius as installed does neither, and nothing it writes ties the name it authenticated
+to a session. So the owner names the clients whose names are the authenticated ones; a record from
+any other client is refused, as "not a named client", before anything else is read of it.
 
 What a record does:
 
-  Start, Interim-Update   the session's user on its Framed-IP-Address and Framed-IPv6-Address: a Start
-                          maps them, each Interim-Update renews them - a NAS that sends none leaves the
-                          mapping to the lifetime's end, even while the session goes on
-  Stop                    the session's addresses leave the map, when they are still its user's
-  Accounting-On, -Off     the NAS started again, or stopped: every session it had ends
+  Start                   a logon: the session's user on its Framed-IP-Address and Framed-IPv6-Address
+                          - the latest wins the address, as a domain controller's event does
+  Interim-Update          renews them. An address the session already had is not taken back from a
+                          later logon of another user - from a domain controller, another session,
+                          the portal - which keeps it while the session's user is noted beside it
+                          (the clash shown); an address that is no one's is mapped again. A NAS that
+                          sends none leaves the mapping to the lifetime's end, even while the session
+                          goes on
+  Stop                    the session's addresses leave the map, when they are still its user's -
+                          but an address another open session of the same user holds (a device that
+                          roamed to another NAS, whose Stop at the first comes after its Start at the
+                          second), and a mapping something renewed after the Stop's own time (read
+                          late, the Stop of a session long gone)
+  Accounting-On, -Off     a NAS started again, or stopped: every session of that NAS ends as by a
+                          Stop - the NAS by its NAS-IP-Address, NAS-IPv6-Address and NAS-Identifier,
+                          so that behind a RADIUS server that forwards several, the others' sessions
+                          go on; all the sessions of the client only when the record names no NAS
 
-Refused, each counted on the page by its reason: a record with no Acct-Status-Type, or no time; no
-user, or one that names nobody - anonymous, the outer name of an EAP client that hides its own; a
-computer (host/... or a name ending in $); a MAC address as the name (MAC authentication); no
-address, or none that is a client's. The collector then judges each address as it judges a domain
-controller's event: the firewall's own, a domain controller's, Never map's, a user of Ignore users,
-and a record older than the mapping lifetime when it is read (stale: its mapping would end at once).
+Refused, each counted on the page by its reason: a record from a client not named; one with no
+Acct-Status-Type, or no time; no user, or one that names nobody - anonymous, the outer name of an EAP
+client that hides its own; a computer (host/... or a name ending in $); a MAC address as the name
+(MAC authentication); with a directory chosen in Groups from, a name written with a realm or a domain
+that is not the directory's (another directory: its groups would be those of a user of the same name
+there); no address, or none that is a client's. The collector then judges each address as it judges
+a domain controller's event: the firewall's own, a domain controller's, Never map's, a user of Ignore
+users, and a record older than the mapping lifetime when it is read (stale: its mapping would end at
+once).
 
 A record's time is the time FreeRADIUS wrote it (its Timestamp), less the seconds the NAS said it
 waited before sending (Acct-Delay-Time): the firewall's own clock, never the NAS's.
 
-What was read of each file, and the sessions open, are kept in /var/db/os-useridentity/radius.json:
-the collector goes on where it stopped, and what came while it was down is read then, in order. A
-file it never read is read whole when it was written to within the lifetime, else from its end.
+Only the files a record within the lifetime can be in are read: detail-YYYYMMDD of the days from the
+lifetime's start to tomorrow - nothing ever takes the older ones away (os-freeradius keeps them), and
+compressed ones are not records. What was read of each, and the sessions open, are kept in
+/var/db/os-useridentity/radius.json, written at most every ten seconds and when the collector stops:
+the collector goes on where it stopped, and what came while it was down is read then, in order - after
+a crash, the last seconds again, which renews nothing twice and ends nothing renewed since. A file it
+never read is read whole when it was written to within the lifetime, else from its end.
 """
 
-import glob
 import os
 import re
 import sys
@@ -58,10 +82,12 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import engine                                                            # noqa: E402
 import events                                                            # noqa: E402
+import settings                                                          # noqa: E402
 
 RADACCT = '/var/log/radacct'
 STATE = engine.STATE + '/radius.json'
 CHUNK = 4 << 20         # bytes of one file read at a time: what is left, at the next reading
+SAVE_EVERY = 10         # seconds: radius.json written at most this often while records come
 
 STATUS = {'start': 'start', '1': 'start', 'interim-update': 'interim', 'alive': 'interim', '3': 'interim',
           'stop': 'stop', '2': 'stop', 'accounting-on': 'on', '7': 'on', 'accounting-off': 'off', '8': 'off'}
@@ -145,10 +171,28 @@ def record_time(header, found):
     return when
 
 
+def nas_of(found):
+    """[NAS-IP-Address, NAS-IPv6-Address, NAS-Identifier] of a record, each '' when it gives none: who
+    the NAS is, whichever client - the NAS itself, or a RADIUS server forwarding it - sent the record."""
+    return [events.address(found.get('NAS-IP-Address')) or '', events.address(found.get('NAS-IPv6-Address')) or '',
+            str(found.get('NAS-Identifier') or '').strip()]
+
+
+def same_nas(session, record):
+    """Whether a session is of the NAS a record names: one of the three at least the same in both, none
+    different. A record that names no NAS is its client's - every NAS behind it; so is a session whose
+    records named none, which no other way tells apart."""
+    session, record = list(session or ['', '', '']), list(record or ['', '', ''])
+    if not any(record) or not any(session):
+        return True
+    both = [(one, other) for one, other in zip(session, record) if one and other]
+    return bool(both) and all(one == other for one, other in both)
+
+
 def interpret(client, header, found):
     """What one record says: (status, record) with status start, interim, stop, on or off; ('other',
     the status as written) for a status that maps nothing; ('refused', reason). The record:
-    {'status', 'name', 'time', 'nas', 'hostname', 'session', 'user', 'domain', 'addresses'}."""
+    {'status', 'name', 'time', 'client', 'nas', 'hostname', 'session', 'user', 'domain', 'addresses'}."""
     raw = found.get('Acct-Status-Type', '').strip()
     if not raw:
         return 'refused', 'unreadable'
@@ -158,7 +202,7 @@ def interpret(client, header, found):
     when = record_time(header, found)
     if when is None:
         return 'refused', 'no time'
-    record = {'status': status, 'name': NAMES[status], 'time': when, 'nas': client,
+    record = {'status': status, 'name': NAMES[status], 'time': when, 'client': client, 'nas': nas_of(found),
               'hostname': (found.get('NAS-Identifier') or found.get('NAS-IP-Address') or '').strip()}
     if status in ('on', 'off'):
         return status, record
@@ -187,31 +231,65 @@ def event(record, where):
             'address': where, 'time': record['time'], 'logon_type': '', 'hostname': record['hostname']}
 
 
+def days(now, lifetime):
+    """The names of the files a record within the lifetime can be in: one a day, from the day before the
+    lifetime began to the day after today - FreeRADIUS names them by its own date, and a day either way
+    leaves room for a zone or a clock that is not the firewall's."""
+    names = set()
+    start, end = int(now - lifetime) - 86400, int(now) + 86400
+    for stamp in list(range(start, end, 3 * 3600)) + [end]:
+        names.add('detail-' + time.strftime('%Y%m%d', time.localtime(stamp)))
+    return names
+
+
 class Accounting:
-    """The detail files read, and the sessions open: {session: {'nas', 'user', 'addresses', 'last'}}."""
+    """The detail files read, and the sessions open: {session: {'client', 'nas', 'user', 'addresses',
+    'since', 'last'}} - since the session's logon, last its last record. A session's entry is replaced
+    whole, never changed in place, so a copy of the dict is a copy of the sessions (mark())."""
 
     def __init__(self, path=None, folder=None):
         self.path = path or STATE
         self.folder = folder or RADACCT
         found = engine.read_json(self.path, {})
         self.files = found.get('files') if isinstance(found.get('files'), dict) else {}
-        self.sessions = found.get('sessions') if isinstance(found.get('sessions'), dict) else {}
+        self.sessions = {}
+        for key, session in (found.get('sessions') if isinstance(found.get('sessions'), dict) else {}).items():
+            if isinstance(session, dict) and session.get('user') and isinstance(session.get('addresses'), list):
+                last = session.get('last') if isinstance(session.get('last'), (int, float)) else 0
+                nas = session.get('nas') if isinstance(session.get('nas'), list) and len(session['nas']) == 3 else \
+                    ['', '', '']
+                self.sessions[key] = {'client': str(session.get('client') or ''), 'nas': nas, 'user': session['user'],
+                                      'addresses': session['addresses'], 'last': last,
+                                      'since': session.get('since') if isinstance(session.get('since'), (int, float))
+                                      else last}
         self.dirty = False
+        self.saved_at = 0.0
 
     def found(self):
         """Whether os-freeradius's accounting directory is there."""
         return os.path.isdir(self.folder)
 
+    def paths(self, now, lifetime):
+        """The files that may be read now, each client's in their days' order: its directory's
+        detail-YYYYMMDD of days(), whether there or not."""
+        try:
+            clients = sorted(os.listdir(self.folder))
+        except OSError:
+            return []
+        names = sorted(days(now, lifetime))
+        return [os.path.join(self.folder, client, name) for client in clients for name in names]
+
     def read(self, now, lifetime, chunk=CHUNK):
         """[(client, time line, {attribute: value})] of the records written since the last reading, the
         files of each client in their days' order."""
         out = []
-        paths = sorted(glob.glob(os.path.join(self.folder, '*', 'detail-*')))
-        for path in paths:
+        there = set()
+        for path in self.paths(now, lifetime):
             try:
                 stat = os.stat(path)
             except OSError:
                 continue
+            there.add(path)
             known = self.files.get(path)
             if known is None:
                 offset = 0 if stat.st_mtime >= now - lifetime else stat.st_size
@@ -235,80 +313,114 @@ class Accounting:
             if known != mark:
                 self.files[path] = mark
                 self.dirty = True
-        there = set(paths)
+        # a file gone, or of a day past the lifetime: forgotten - what is in it is older than the lifetime
         for path in [p for p in self.files if p not in there]:
             del self.files[path]
             self.dirty = True
         return out
 
-    def take(self, client, header, found, now, lifetime):
+    def ends(self, client, user, addresses, when):
+        """('end', client, user, address, when) for each address that leaves - but those another open
+        session of the same user still holds."""
+        held = {where for session in self.sessions.values() if session['user'] == user
+                for where in session['addresses']}
+        return [('end', client, user, where, when) for where in addresses if where not in held]
+
+    def take(self, client, header, found, now, lifetime, clients=None, realms=None):
         """What one record does to the sessions, in order: [('line', client)], then ('refused', client,
-        reason), ('other', client, status), ('event', client, event) for each address a Start or an
-        Interim-Update gives, ('end', client, user, address) for each a Stop or Accounting-On/-Off
-        ends, ('heard', client, record)."""
+        reason), ('other', client, status), ('heard', client, record), and for its addresses:
+        ('event', client, event) - a logon, the latest wins - ('renew', client, event, since) - an
+        Interim-Update of an address its session had, since the session's logon - and ('end', client,
+        user, address, when) for each a Stop or Accounting-On/-Off ends. clients: the addresses of the
+        clients that may map (None: any); realms: the directory's realms (None: no directory chosen)."""
         out = [('line', client)]
+        if clients is not None and settings.address_key(client) not in clients:
+            return out + [('refused', client, 'not a named client')]
         status, record = interpret(client, header, found)
         if status == 'refused':
             return out + [('refused', client, record)]
         if status == 'other':
             return out + [('other', client, record)]
+        if realms is not None and record.get('domain') and record['domain'].lower() not in realms:
+            return out + [('refused', client, 'another directory')]
         out.append(('heard', client, record))
         self.dirty = True
+        when = record['time']
         if status in ('on', 'off'):
             out.append(('other', client, record['name']))
+            gone = []
             for key in sorted(self.sessions):
                 session = self.sessions[key]
-                if session.get('nas') == client:
-                    out.extend(('end', client, session['user'], where) for where in session.get('addresses', []))
+                if session['client'] == client and same_nas(session['nas'], record['nas']):
+                    gone.append(session)
                     del self.sessions[key]
+            for session in gone:
+                out.extend(self.ends(client, session['user'], session['addresses'], when))
             return out
         key = record['session']
-        known = self.sessions.get(key) or {}
+        known = self.sessions.get(key)
         if status == 'stop':
-            gone = list(known.get('addresses', []))
-            gone += [where for where in record['addresses'] if where not in gone]
-            out.extend(('end', client, known.get('user') or record['user'], where) for where in gone)
             self.sessions.pop(key, None)
+            gone = list(known['addresses']) if known else []
+            gone += [where for where in record['addresses'] if where not in gone]
+            out.extend(self.ends(client, known['user'] if known else record['user'], gone, when))
             return out
+        same = known is not None and known['user'] == record['user']
         addresses = record['addresses']
         if not addresses:
             # an Interim-Update that leaves the address out renews the one the session had
-            addresses = list(known.get('addresses', [])) if known.get('user') == record['user'] else []
+            addresses = list(known['addresses']) if same else []
         if not addresses:
             out.append(('refused', client, 'no address'))
-        if known.get('user') and known['user'] != record['user']:
-            out.extend(('end', client, known['user'], where) for where in known.get('addresses', []))
-        elif known:
+        since = known['since'] if same and status == 'interim' else when
+        self.sessions[key] = {'client': client, 'nas': record['nas'], 'user': record['user'], 'addresses': addresses,
+                              'since': since, 'last': when}
+        if known is not None and not same:
+            # the session names another user now: the one before ends there first
+            out.extend(self.ends(client, known['user'], known['addresses'], when))
+        elif known is not None:
             # an address the session no longer has: its NAS gave it another
-            out.extend(('end', client, known['user'], where) for where in known.get('addresses', [])
-                       if where not in addresses)
-        self.sessions[key] = {'nas': client, 'user': record['user'], 'addresses': addresses, 'last': record['time']}
+            out.extend(self.ends(client, known['user'], [w for w in known['addresses'] if w not in addresses], when))
         for where in addresses:
             if events.no_client(where):
                 out.append(('refused', client, 'not a client address'))
+            elif status == 'interim' and same and where in known['addresses']:
+                out.append(('renew', client, event(record, where), since))
             else:
                 out.append(('event', client, event(record, where)))
         return out
 
-    def poll(self, now, lifetime):
+    def poll(self, now, lifetime, clients=None, realms=None):
         """take() of every record written since the last reading, in order; the sessions with no record
         for longer than the lifetime forgotten - their mappings have ended by then."""
         out = []
         for client, header, found in self.read(now, lifetime):
-            out.extend(self.take(client, header, found, now, lifetime))
-        for key in [k for k, s in self.sessions.items() if s.get('last', 0) < now - lifetime]:
+            out.extend(self.take(client, header, found, now, lifetime, clients, realms))
+        for key in [k for k, s in self.sessions.items() if s['last'] < now - lifetime]:
             del self.sessions[key]
             self.dirty = True
         return out
 
-    def forget(self):
-        """The sessions forgotten - RADIUS switched off: the minute's run takes their mappings out. What
-        was read of each file is kept: switched on again, what came since is read."""
-        if self.sessions:
-            self.sessions = {}
+    def mark(self):
+        """Where the reading stands - what was read of each file, the sessions - to go back to with
+        restore() when what was read could not be put in the map."""
+        return dict(self.files), dict(self.sessions), self.dirty
+
+    def restore(self, mark):
+        self.files, self.sessions, self.dirty = dict(mark[0]), dict(mark[1]), mark[2]
+
+    def forget(self, keep=None):
+        """The sessions keep(session) refuses forgotten - all of them without keep: RADIUS switched off,
+        or their client no longer named; the minute's run takes their mappings out. What was read of each
+        file is kept: switched on again, what came since is read."""
+        for key in [k for k, s in self.sessions.items() if keep is None or not keep(s)]:
+            del self.sessions[key]
             self.dirty = True
 
-    def save(self):
-        if self.dirty:
+    def save(self, now=None, force=False):
+        """radius.json written when something changed: at most every SAVE_EVERY seconds, or now when forced."""
+        now = time.time() if now is None else now
+        if self.dirty and (force or now - self.saved_at >= SAVE_EVERY):
             engine.write_json(self.path, {'files': self.files, 'sessions': self.sessions}, mode=0o640)
             self.dirty = False
+            self.saved_at = now
