@@ -341,10 +341,20 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(today, 'w', encoding='utf-8') as handle:
         handle.write(LAB.split('\n\n')[0] + '\n\n')
     check('a file cut short: read from its start', [f['Acct-Status-Type'] for _, _, f in again.read(now + 5, LIFE)], ['Start'])
+    # made again under the same name, its first record another time line, as FreeRADIUS writes each record's own
+    # time; the inode is the old one's as the reader last saw it - a file system may give a freed inode out at once
+    # (it did on GitHub's runners), so only the file's first bytes tell the two apart
     os.unlink(today)
     with open(today, 'w', encoding='utf-8') as handle:
-        handle.write(LAB + LAB)
-    check('a file made again under the same name: read from its start', len(again.read(now + 6, LIFE)), 6)
+        handle.write(LAB.replace('Tue Nov 17', 'Wed Nov 18', 1) + LAB)
+    again.files[today]['inode'] = os.stat(today).st_ino
+    check('a file made again under the same name, the same inode number: read from its start',
+          len(again.read(now + 6, LIFE)), 6)
+    check('... and its first bytes kept for the next reading', str(again.files[today].get('head', '')).split(':')[0],
+          str(radius.HEAD))
+    with open(today, 'a', encoding='utf-8') as handle:
+        handle.write(LAB.split('\n\n')[0] + '\n\n')
+    check('... a record added to it: that record alone', len(again.read(now + 7, LIFE)), 1)
     os.unlink(yesterday)
     again.read(now + 7, LIFE)
     check('a file gone: forgotten', sorted(os.path.basename(p) for p in again.files), ['detail-20261117'])

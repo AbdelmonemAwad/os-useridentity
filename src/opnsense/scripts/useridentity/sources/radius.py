@@ -74,6 +74,7 @@ a crash, the last seconds again, which renews nothing twice and ends nothing ren
 never read is read whole when it was written to within the lifetime, else from its end.
 """
 
+import hashlib
 import os
 import re
 import sys
@@ -88,6 +89,7 @@ RADACCT = '/var/log/radacct'
 STATE = engine.STATE + '/radius.json'
 CHUNK = 4 << 20         # bytes of one file read at a time: what is left, at the next reading
 SAVE_EVERY = 10         # seconds: radius.json written at most this often while records come
+HEAD = 64               # bytes: a file's first ones, by which one made again under its name is known
 
 STATUS = {'start': 'start', '1': 'start', 'interim-update': 'interim', 'alive': 'interim', '3': 'interim',
           'stop': 'stop', '2': 'stop', 'accounting-on': 'on', '7': 'on', 'accounting-off': 'off', '8': 'off'}
@@ -121,6 +123,16 @@ def unquote(value):
         out.append(char)
         i += 1
     return ''.join(out)
+
+
+def head_of(path, size):
+    """'<n>:<sha256>' of a file's first n bytes (sha256), n at most size; None when it cannot be read."""
+    try:
+        with open(path, 'rb') as handle:
+            data = handle.read(size)
+    except OSError:
+        return None
+    return '%d:%s' % (len(data), hashlib.sha256(data).hexdigest())
 
 
 def split(data):
@@ -291,12 +303,18 @@ class Accounting:
                 continue
             there.add(path)
             known = self.files.get(path)
+            kept = False
             if known is None:
                 offset = 0 if stat.st_mtime >= now - lifetime else stat.st_size
             elif known.get('inode') != stat.st_ino or stat.st_size < known.get('offset', 0):
                 offset = 0          # a file made again under the same name, or cut short: read from its start
+            elif known.get('head') and head_of(path, int(str(known['head']).split(':')[0] or 0)) != known['head']:
+                # made again under the same name, and given the same inode number - a file system may hand a
+                # freed one out at once (seen on GitHub's runners): its first bytes are another record's
+                offset = 0
             else:
                 offset = known['offset']
+                kept = True
             if offset < stat.st_size:
                 try:
                     with open(path, 'rb') as handle:
@@ -310,6 +328,11 @@ class Accounting:
                     header, found = parse(text)
                     out.append((client, header, found))
             mark = {'inode': stat.st_ino, 'offset': offset}
+            if offset:
+                # the first bytes read, up to HEAD, by which a file made again under the same name is known
+                size = min(HEAD, offset)
+                old = known.get('head') if known and kept else None
+                mark['head'] = old if old and str(old).startswith('%d:' % size) else head_of(path, size)
             if known != mark:
                 self.files[path] = mark
                 self.dirty = True
