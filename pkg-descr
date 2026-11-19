@@ -1,13 +1,17 @@
 User Identity maps each address on the network to the user logged on
 from it, from the logon events of the Active Directory domain
-controllers: NXLog CE on each sends them to OPNsense's own syslog-ng,
-which takes them from the domain controllers' addresses alone. The
-directory chosen in System: Access: Servers says which groups each user
-is in. The addresses of each group chosen, and of each user named, are
-kept in a pf table: an External alias in Firewall: Aliases for rules to
-use. A mapping ends at the end of its lifetime, or when another device
-takes the address. Where os-xgs-npu is installed, an address that joins
-a table has its open connections cut. Off by default.
+controllers - NXLog CE on each sends them to OPNsense's own syslog-ng,
+which takes them from the domain controllers' addresses alone - from
+the RADIUS accounting os-freeradius writes, and from the captive
+portal's sessions. The latest event wins an address, and the page shows
+two sources that clash over one. The directory chosen in System:
+Access: Servers says which groups each user is in. The addresses of
+each group chosen, and of each user named, are kept in a pf table: an
+External alias in Firewall: Aliases for rules to use. A mapping ends at
+a RADIUS Stop or the end of a portal session, at the end of its
+lifetime, or when another device takes the address. Where os-xgs-npu is
+installed, an address that joins a table has its open connections cut.
+Off by default.
 
 Plugin Changelog
 ================
