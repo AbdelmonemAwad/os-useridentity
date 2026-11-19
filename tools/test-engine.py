@@ -372,6 +372,102 @@ with tempfile.TemporaryDirectory() as tmp:
     conf = settings.read(bare)
     check('settings: a value out of its range - the default; no interface chosen - none',
           (conf['lifetime'], conf['port'], conf['stale'], conf['interfaces']), (480 * 60, 514, 300, []))
+    with open(bare, 'w', encoding='utf-8') as handle:
+        handle.write('<opnsense><OPNsense><UserIdentity><general><enabled>1</enabled><radius>1</radius><portal>1</portal>'
+                     '</general></UserIdentity></OPNsense></opnsense>')
+    conf = settings.read(bare)
+    check('settings: RADIUS accounting and the captive portal switched on', (conf['radius'], conf['portal']), (True, True))
+
+# the sources beside the domain controllers (the plan's top-03)
+conf = settings.read(CONFIG)
+check('settings: RADIUS and the portal off by default; the zones switched on by their id, with their description; '
+      'the voucher servers', (conf['radius'], conf['portal'], conf['zones'], conf['vouchers']),
+      (False, False, {'0': 'Guests'}, {'Vouchers'}))
+
+
+def evk(user, address, when, kind, number='Start'):
+    return {'id': number, 'kind': kind, 'user': user, 'domain': '', 'address': address, 'time': when, 'logon_type': '',
+            'hostname': ''}
+
+
+state = fresh()
+engine.see(state, evk('user1', '192.0.2.60', T0, 'radius'), T0, LIFE, '192.0.2.40')
+entry = state['map']['192.0.2.60']
+check('a source\'s kind kept on the mapping, with who said it and what',
+      (entry['kind'], entry['source'], entry['event'], entry['via']), ('radius', '192.0.2.40', 'Start', {}))
+engine.see(state, ev('user1', '192.0.2.60', T0 + 10), T0 + 10, LIFE, '192.0.2.10')
+check('renewed by another source: the latest names the source', (entry['kind'], entry['source'], entry['last']),
+      ('ad', '192.0.2.10', T0 + 10))
+engine.see(state, evk('user1', '192.0.2.60', T0 + 5, 'radius', 'Interim-Update'), T0 + 11, LIFE, '192.0.2.40')
+check('an older event of the same user: renews nothing, and names no source', (entry['kind'], entry['source'], entry['last']),
+      ('ad', '192.0.2.10', T0 + 10))
+check('another source gives the address to another user later: latest wins, the address shared',
+      engine.see(state, evk('user2', '192.0.2.60', T0 + 20, 'portal', 'logon'), T0 + 20, LIFE, '0'),
+      [('changed', '192.0.2.60', ('user1', 'user2')), ('shared', '192.0.2.60', ['user1', 'user2'])])
+check('... the one before kept with its source: a clash between the two',
+      (entry['kind'], entry['via'], engine.clash(entry, T0 + 20, LIFE)), ('portal', {'user1': 'ad'}, ['user1']))
+check('... an older event of the first source: noted, still from its source',
+      (engine.see(state, ev('user1', '192.0.2.60', T0 + 15), T0 + 21, LIFE, '192.0.2.10'), entry['others'], entry['via']),
+      ([('noted', '192.0.2.60', 'user1')], {'user1': T0 + 15}, {'user1': 'ad'}))
+check('the clash gone with the lifetime of the one before', engine.clash(entry, T0 + 15 + LIFE, LIFE), [])
+same = fresh()
+engine.see(same, ev('user1', '192.0.2.61', T0), T0, LIFE)
+engine.see(same, ev('user2', '192.0.2.61', T0 + 1), T0 + 1, LIFE)
+check('two users from one source: shared, no clash', (engine.shared(same['map']['192.0.2.61'], T0 + 1, LIFE),
+                                                      engine.clash(same['map']['192.0.2.61'], T0 + 1, LIFE)), (True, []))
+
+# note: a user a source still gives the address to, kept among the others without taking it
+state = fresh()
+engine.see(state, ev('user1', '192.0.2.62', T0), T0, LIFE, '192.0.2.10')
+check('note: another user kept among the others - the address newly shared',
+      engine.note(state, '192.0.2.62', 'user2', 'portal', T0 + 30, LIFE), [('shared', '192.0.2.62', ['user1', 'user2'])])
+check('note: the address still the first user\'s', (state['map']['192.0.2.62']['user'], state['map']['192.0.2.62']['via']),
+      ('user1', {'user2': 'portal'}))
+check('note again: shared already - nothing new to say', engine.note(state, '192.0.2.62', 'user2', 'portal', T0 + 90, LIFE), [])
+check('note of the user that holds it, or of an address not mapped: nothing',
+      (engine.note(state, '192.0.2.62', 'user1', 'portal', T0 + 91, LIFE), engine.note(state, '192.0.2.99', 'u', 'portal', T0, LIFE)),
+      ([], []))
+
+# leave: a source says its user left
+check('leave: the user another holds the address for - only no longer among the others',
+      (engine.leave(state, 'user2', '192.0.2.62'), state['map']['192.0.2.62']['others'], state['map']['192.0.2.62']['via']),
+      ([], {}, {}))
+check('leave: the user that holds it - the address leaves the map',
+      (engine.leave(state, 'user1', '192.0.2.62'), '192.0.2.62' in state['map']),
+      ([('left', '192.0.2.62', ('user1', 'logoff'))], False))
+check('leave: an address not mapped - nothing', engine.leave(state, 'user1', '192.0.2.62'), [])
+
+# drop: the mappings of a source switched off
+state = fresh()
+engine.see(state, ev('user1', '192.0.2.63', T0), T0, LIFE, '192.0.2.10')
+engine.see(state, evk('user2', '192.0.2.64', T0, 'radius'), T0, LIFE, '192.0.2.40')
+engine.see(state, evk('user3', '192.0.2.65', T0, 'portal', 'logon'), T0, LIFE, '0')
+check('drop: those keep() refuses taken out, said as a source off',
+      (engine.drop(state, lambda e: e['kind'] != 'radius'), sorted(state['map'])),
+      ([('left', '192.0.2.64', ('user2', 'source off'))], ['192.0.2.63', '192.0.2.65']))
+check('MAC check: a portal session\'s address left to the portal, the domain controller\'s checked',
+      engine.check_macs(state, {'192.0.2.63': '02:00:00:00:00:63', '192.0.2.65': '02:00:00:00:00:65'}) +
+      engine.check_macs(state, {'192.0.2.63': '02:00:00:00:00:64', '192.0.2.65': '02:00:00:00:00:66'}),
+      [('left', '192.0.2.63', ('user1', 'mac'))])
+check('... nothing recorded for the portal\'s', state['map']['192.0.2.65']['mac'], '')
+
+# a map the first part wrote: no kind, no via
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, 'map.json')
+    with open(path, 'w') as handle:
+        handle.write(json.dumps({'map': {
+            '192.0.2.70': {'user': 'user1', 'source': '192.0.2.10', 'first': T0, 'last': T0, 'expires': T0 + LIFE,
+                           'mac': '', 'others': {'user9': T0 - 5}},
+            '192.0.2.71': {'user': 'user2', 'kind': 'nonsense', 'first': T0, 'last': T0, 'expires': T0 + LIFE, 'mac': '',
+                           'others': 'x', 'via': {'user7': 'radius'}}}}))
+    found = engine.load(path)['map']
+    check('a map the first part wrote: each mapping a domain controller\'s, each other user too',
+          (found['192.0.2.70']['kind'], found['192.0.2.70']['via'], found['192.0.2.71']['kind'],
+           found['192.0.2.71']['others'], found['192.0.2.71']['via']), ('ad', {'user9': 'ad'}, 'ad', {}, {}))
+    state = {'map': found}
+    engine.expire(state, T0 - 5 + LIFE + 1, LIFE)
+    check('expire: the others past the lifetime forgotten with their sources', (found['192.0.2.70']['others'],
+                                                                                found['192.0.2.70']['via']), ({}, {}))
 
 print('%d of %d checks failed' % (failures, checks) if failures else '%d checks passed' % checks)
 sys.exit(1 if failures else 0)

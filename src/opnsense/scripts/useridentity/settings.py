@@ -5,8 +5,8 @@
 #
 """User Identity's settings, read straight out of config.xml by element name: the plugin's own
 (models/OPNsense/UserIdentity/UserIdentity.xml - the names here are not free), the System: Access:
-Servers entry it names for the groups, and the aliases and the XGS cut list it shares with OPNsense
-and os-xgs-npu.
+Servers entry it names for the groups and those that are vouchers, the captive portal's zones, and
+the aliases and the XGS cut list it shares with OPNsense and os-xgs-npu.
 
 Nothing here writes. A config.xml that cannot be read gives the defaults with read False, and every
 caller does nothing it would regret on them: the plugin is off by default.
@@ -100,6 +100,17 @@ def server(root, name):
     return None
 
 
+def zones(root):
+    """{zone id: its description} of the captive portal's zones switched on - os-xgs-npu's cp_users.py
+    reads them the same way. A session of a zone not here, switched off or gone, maps nothing."""
+    out = {}
+    for node in root.findall('OPNsense/captiveportal/zones/zone'):
+        zoneid = _text(node, 'zoneid')
+        if _text(node, 'enabled', '0') == '1' and zoneid.isdigit():
+            out[str(int(zoneid))] = _text(node, 'description')
+    return out
+
+
 def read(path=None):
     out = {
         'read': False, 'enabled': False, 'ldap_server': '', 'server': None, 'dcs': [], 'bad_dcs': [],
@@ -107,6 +118,7 @@ def read(path=None):
         'mac_check': True, 'stale': STALE * 60, 'nested': True, 'never_map': [], 'bad_never_map': [],
         'ignore': set(), 'log_names': False, 'history_days': HISTORY_DAYS, 'alert_silent': ALERT_SILENT * 60,
         'groups': [], 'users': [], 'cut_lists': [], 'xgs': False,
+        'radius': False, 'portal': False, 'zones': {}, 'vouchers': set(),
     }
     try:
         root = ET.parse(path or CONFIG).getroot()
@@ -136,7 +148,13 @@ def read(path=None):
         out['log_names'] = _text(general, 'log_names', '0') == '1'
         out['history_days'] = _int(_text(general, 'history_days'), HISTORY_DAYS, 0, 365)
         out['alert_silent'] = _int(_text(general, 'alert_silent'), ALERT_SILENT, 0, 10080) * 60
+        out['radius'] = _text(general, 'radius', '0') == '1'
+        out['portal'] = _text(general, 'portal', '0') == '1'
     out['server'] = server(root, out['ldap_server'])
+    out['zones'] = zones(root)
+    # a voucher is a code anyone may hold, not a user: a portal session it opened maps nothing
+    out['vouchers'] = {_text(node, 'name') for node in root.findall('system/authserver')
+                       if _text(node, 'type') == 'voucher' and _text(node, 'name')}
     out['groups'] = rows(root, 'OPNsense/UserIdentity/groups/group', 'group')
     out['users'] = rows(root, 'OPNsense/UserIdentity/users/user', 'user')
     xgs = root.find('OPNsense/XGS/general')
