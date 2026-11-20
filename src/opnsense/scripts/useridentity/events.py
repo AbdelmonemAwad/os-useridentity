@@ -22,7 +22,8 @@ address. Every other event is counted by its ID and goes no further.
 
     split(datagram)                   (sender, message)
     parse(message)                    ('event', {...}) | ('other', event id) | ('refused', reason)
-    judge(event, arrival, context)    None when the event may map, else the reason it may not
+    judge(event, arrival, context)    None when the event may map, else the reason it may not -
+                                      for the other sources' events too (sources/radius.py, portal.py)
 
 Refused, each counted on the page by its reason: a line that is not JSON; a ticket not issued; a
 ticket issued with no pre-authentication (PreAuthType 0 - phase 0's lab saw 2 on every user's), which any
@@ -71,6 +72,16 @@ def user_name(raw):
     if '@' in name:
         name = name.split('@', 1)[0]
     return name.strip().lower()
+
+
+def domain_of(raw):
+    """The domain or realm a name is written with - 'DOMAIN\\name', 'name@REALM' - or ''."""
+    name = str(raw or '').strip()
+    if '\\' in name:
+        return name.split('\\', 1)[0].strip()
+    if '@' in name:
+        return name.split('@', 1)[1].strip()
+    return ''
 
 
 def address(raw):
@@ -187,12 +198,15 @@ class Context:
         self.ignore = {name.lower() for name in ignore}
 
 
-def judge(event, arrival, context):
-    """None when the event, arrived at arrival, may map its address; else why not."""
+def judge(event, arrival, context, stale=None):
+    """None when the event, arrived at arrival, may map its address; else why not. stale, in seconds,
+    instead of Settings' Stale after: a RADIUS record read late is still the session's own word, and is
+    stale only once older than the lifetime; a captive portal session is never."""
+    stale = context.stale if stale is None else stale
     age = arrival - event['time']
-    if age > context.stale:
+    if age > stale:
         return 'stale'
-    if -age > context.stale:
+    if -age > stale:
         return 'clock'
     where = ipaddress.ip_address(event['address'])
     if where in context.own or where in context.broadcast:

@@ -20,10 +20,11 @@ name: checks
 #   * an address from the machine this was written on, left in an example.
 #
 # And what this plugin adds: the domain controllers' lines read as phase 0's lab had them
-# (every address a documentation one), the map and its tables, the directory's questions,
-# the service through a real datagram socket, the firewall hook against each OPNsense's
-# method names, the aliases through stand-ins of OPNsense's models, and the install and
-# removal run in a temporary root.
+# (every address a documentation one), RADIUS accounting as os-freeradius writes it and the
+# captive portal's sessions as its database holds them, the map and its tables, the
+# directory's questions, the service through a real datagram socket, the firewall hook
+# against each OPNsense's method names, the aliases through stand-ins of OPNsense's models,
+# the page's own script under node, and the install and removal run in a temporary root.
 
 on:
   push:
@@ -57,10 +58,17 @@ jobs:
       - name: The domain controllers' lines
         run: python3 tools/test-events.py
 
-      # The map - join, renew, latest wins and the shared mark, the lifetime, the MAC check - the
-      # tables made from it, FreeBSD's ifconfig, arp and ndp output, and the settings.
+      # The map - join, renew, latest wins and the shared mark, the clash between two sources, a
+      # source's logoff, a source switched off, the lifetime, the MAC check - the tables made from it,
+      # FreeBSD's ifconfig, arp and ndp output, and the settings.
       - name: The map and its tables
         run: python3 tools/test-engine.py
+
+      # RADIUS accounting as os-freeradius writes it (phase 0's A9 records) and read as it grows; the
+      # captive portal's sessions from a database of core's tables, and the map made to say what the
+      # portal says.
+      - name: RADIUS accounting and the captive portal's sessions
+        run: python3 tools/test-sources.py
 
       # The directory through a stand-in of ldap3, then through ldap3 2.9.1's own constructors and
       # filter code - the version OPNsense 26.7 installs.
@@ -69,8 +77,8 @@ jobs:
           python3 -m pip install --quiet ldap3==2.9.1
           python3 tools/test-ldap.py
 
-      # syslog-ng's source and its guards, the collector through a datagram socket, the minute's run,
-      # the alerts, the page's status.
+      # syslog-ng's source and its guards, the collector through a datagram socket and with RADIUS and
+      # the portal read, the minute's run, the alerts, the page's status.
       - name: The service
         run: python3 tools/test-service.py
 
@@ -90,6 +98,11 @@ jobs:
       # The model's own checks: a port the firewall itself serves refused, one alias name per row.
       - name: The model's own checks
         run: php tools/test-model.php
+
+      # The page's own script under node, with stand-ins for jQuery and OPNsense's page: the cards
+      # for each status, and the grids' formatters - the sources, the clashes, the refusals.
+      - name: The page's script
+        run: node tools/test-page.js
 
       # install/install.sh copies src/ whole; install/uninstall.sh names what it removes.
       - name: Every file the installer lays down is removed by the uninstaller

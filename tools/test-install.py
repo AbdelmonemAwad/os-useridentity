@@ -356,6 +356,7 @@ with tempfile.TemporaryDirectory() as tmp:
             'configctl useridentity remove hook=yes', 'configctl syslog restart hook=yes'], False))
     os.makedirs(box.fake + '/usr/local/opnsense/scripts/useridentity/__pycache__', exist_ok=True)
     box.write(box.fake + '/usr/local/opnsense/scripts/useridentity/__pycache__/collector.cpython-311.pyc', 'x')
+    box.write(box.fake + '/usr/local/opnsense/scripts/useridentity/sources/__pycache__/radius.cpython-311.pyc', 'x')
     for path in source_files():
         os.remove(box.fake + path)
     box.write(box.fake + '/var/run/useridentity.pid', '12345')
@@ -363,7 +364,8 @@ with tempfile.TemporaryDirectory() as tmp:
     box.config(OFF)
     box.forget()
     rc, out = box.run('pkg/post-deinstall.sh')
-    check('post-deinstall.sh: nothing of the plugin left - the menu file, Python\'s caches, the state, the pidfile',
+    check('post-deinstall.sh: nothing of the plugin left - the menu file, Python\'s caches (the sources\' too), the '
+          'state, the pidfile',
           box.plugin_files(), [])
     check('post-deinstall.sh: configd, the filter and cron, the tables of aliases gone taken out of pf',
           box.called('service') + box.called('configctl') + box.called('pfctl -t'),

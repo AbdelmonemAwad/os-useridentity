@@ -9,6 +9,9 @@
 - the MAC check (settled point 7): an address whose MAC in the firewall's ARP or NDP table is not the
   one it had leaves the map - another device has it - while Settings has it on;
 - with the plugin off, every mapping forgotten;
+- the mappings a source switched off gave last taken out: RADIUS accounting or the captive portal
+  turned off in Settings, a RADIUS client no longer named, a portal's zone switched off - a domain
+  controller no longer named leaves its mappings to their lifetime;
 - every table of the plugin's made again from the map, so one emptied by hand, or written while the
   collector was down, is right within a minute; and the table of an alias of the plugin's switched off -
   kept because a rule or a setting names it - kept empty;
@@ -69,21 +72,42 @@ def silent(conf, now, sources=None, notes=None):
     return newly
 
 
+def kept(conf):
+    """Whether a mapping's source is still on: RADIUS accounting and the client named, the captive portal
+    and the zone of the session - their logoffs are read no more once off. A domain controller's mapping
+    is kept whether its domain controller is still named or not: none ever says a user left, so its
+    mappings end at their lifetime as they would have - a domain controller retired takes no user out
+    of a table at the next minute. Forget every mapping ends them at once."""
+    clients = set(conf['radius_clients'])
+
+    def keep(entry):
+        kind = entry.get('kind', 'ad')
+        if kind == 'radius':
+            return conf['radius'] and settings.address_key(entry.get('source', '')) in clients
+        if kind == 'portal':
+            return conf['portal'] and entry.get('source', '') in conf['zones']
+        return True
+    return keep
+
+
 def run(conf=None, now=None, pf=None, macs=None, flush=False):
     conf = conf if conf is not None else settings.read()
     now = now if now is not None else time.time()
     pf = pf or tables.Pf()
-    summary = {'at': int(now), 'expired': 0, 'mac': 0, 'flushed': 0, 'tables': [], 'errors': []}
+    summary = {'at': int(now), 'expired': 0, 'mac': 0, 'off': 0, 'flushed': 0, 'tables': [], 'errors': []}
     if not conf['read']:
         summary['errors'].append('config.xml could not be read: nothing done')
         return summary
     with engine.locked():
         state = engine.load()
         changes = engine.expire(state, now, conf['lifetime'])
+        changes += engine.forget_ignored(state, conf['ignore'])
         if flush or not conf['enabled']:
             changes += engine.flush(state)
-        elif conf['mac_check'] and state['map']:
-            changes += engine.check_macs(state, macs() if macs else host.macs())
+        else:
+            changes += engine.drop(state, kept(conf))
+            if conf['mac_check'] and state['map']:
+                changes += engine.check_macs(state, macs() if macs else host.macs())
         engine.save(state, writer='minute')
         known = engine.read_json(GROUPS, {})
         if (flush or not conf['enabled']) and known.get('users'):
@@ -98,6 +122,7 @@ def run(conf=None, now=None, pf=None, macs=None, flush=False):
         summary['tables'] = tables.sync(pf, want)
     summary['expired'] = sum(1 for c in changes if c[0] == 'left' and c[2][1] == 'expired')
     summary['mac'] = sum(1 for c in changes if c[0] == 'left' and c[2][1] == 'mac')
+    summary['off'] = sum(1 for c in changes if c[0] == 'left' and c[2][1] == 'source off')
     summary['flushed'] = sum(1 for c in changes if c[0] == 'left' and c[2][1] == 'flushed')
     summary['mapped'] = len(state['map'])
     summary['errors'] = pf.errors

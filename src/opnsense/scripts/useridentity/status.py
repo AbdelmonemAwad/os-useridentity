@@ -3,9 +3,12 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
 #
-"""What the page shows, as one JSON object: whether the collector runs, the live map's counts, the
-group and user tables with the addresses pf holds in each and whether XGS: Settings cuts on them, the
-directory's state, each domain controller's lines and refusals, and syslog-ng's source.
+"""What the page shows, as one JSON object: whether the collector runs, the live map's counts - the
+addresses shared, and those two sources clash over - the group and user tables with the addresses pf
+holds in each and whether XGS: Settings cuts on them, the directory's state, each sender's lines and
+refusals - the domain controllers, the RADIUS clients, the captive portal's zones - whether RADIUS
+accounting and the portal's sessions can be read, how many RADIUS clients are named, and syslog-ng's
+source.
 
     status.py        the cards, Groups' and Users' counts, Sources
     status.py map    the Users tab: the live map, one row an address
@@ -24,6 +27,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import engine                                                            # noqa: E402
 import settings                                                          # noqa: E402
+from sources import portal, radius                                       # noqa: E402
 
 PIDFILE = '/var/run/useridentity.pid'
 PROJECT = '/usr/local/opnsense/scripts/xgs'
@@ -80,33 +84,58 @@ def users_in(state, groups, conf):
 
 
 def mapped(state, groups, conf, now):
-    """The Users tab's rows: one an address."""
+    """The Users tab's rows: one an address - its source (kind: ad, radius or portal; source: the domain
+    controller, the RADIUS client, the portal's zone, and source_name the zone's description), and the
+    other users within the lifetime, each with the source it came from: a clash when that is another."""
     member = users_in(state, groups, conf)
+    zones = conf.get('zones') or {}
     rows = []
     for where, entry in sorted(state['map'].items()):
+        kind = entry.get('kind', 'ad')
+        via = entry.get('via') or {}
         others = sorted(user for user, last in entry.get('others', {}).items()
                         if user != entry['user'] and last > now - conf['lifetime'])
+        told = [{'user': user, 'kind': via.get(user, 'ad')} for user in others]
         rows.append({'address': where, 'user': entry['user'], 'domain': entry.get('domain', ''),
                      'groups': member.get(entry['user'], []), 'known': entry['user'] in groups,
-                     'source': entry.get('source', ''), 'first': entry.get('first'), 'last': entry.get('last'),
-                     'expires': entry.get('expires'), 'mac': entry.get('mac', ''), 'shared': others})
+                     'kind': kind, 'source': entry.get('source', ''),
+                     'source_name': zones.get(entry.get('source', ''), '') if kind == 'portal' else '',
+                     'first': entry.get('first'), 'last': entry.get('last'), 'expires': entry.get('expires'),
+                     'mac': entry.get('mac', ''), 'shared': others, 'others': told,
+                     'clash': any(other['kind'] != kind for other in told)})
     return rows
 
 
+def row(kind, address, seen, named):
+    """One sender's counts for Sources."""
+    refused = dict(seen.get('refused') or {})
+    stale = refused.pop('stale', 0)
+    return {'kind': kind, 'address': address, 'named': named, 'hostname': seen.get('hostname', ''),
+            'last_line': seen.get('last_line'), 'last_event': seen.get('last_event'), 'late': seen.get('late'),
+            'lines': seen.get('lines', 0), 'accepted': seen.get('accepted', 0), 'joined': seen.get('joined', 0),
+            'renewed': seen.get('renewed', 0), 'changed': seen.get('changed', 0), 'ended': seen.get('ended', 0),
+            'stale': stale, 'refused': sum(refused.values()), 'reasons': refused,
+            'other': sum((seen.get('other') or {}).values())}
+
+
 def sources(conf, found):
-    """Each sender's counts for Sources: the domain controllers named first, then any other sender."""
+    """Each sender's counts for Sources: the domain controllers named first, then any other sender of
+    lines; then, while Settings reads them, each RADIUS client named - heard or not - and any other
+    whose records were read, refused, and each zone of the captive portal switched on, named by its
+    description."""
     out = []
     senders = found.get('senders') or {}
     for address in conf['dcs'] + sorted(set(senders) - set(conf['dcs'])):
-        seen = senders.get(address) or {}
-        refused = dict(seen.get('refused') or {})
-        stale = refused.pop('stale', 0)
-        out.append({'address': address, 'named': address in conf['dcs'], 'hostname': seen.get('hostname', ''),
-                    'last_line': seen.get('last_line'), 'last_event': seen.get('last_event'), 'late': seen.get('late'),
-                    'lines': seen.get('lines', 0), 'accepted': seen.get('accepted', 0), 'joined': seen.get('joined', 0),
-                    'renewed': seen.get('renewed', 0), 'changed': seen.get('changed', 0), 'stale': stale,
-                    'refused': sum(refused.values()), 'reasons': refused,
-                    'other': sum((seen.get('other') or {}).values())})
+        out.append(row('ad', address, senders.get(address) or {}, address in conf['dcs']))
+    if conf.get('radius'):
+        clients = {settings.address_key(address): seen for address, seen in (found.get('radius') or {}).items()}
+        named = list(conf.get('radius_clients') or [])
+        for address in named + sorted(set(clients) - set(named)):
+            out.append(row('radius', address, clients.get(address) or {}, address in named))
+    if conf.get('portal'):
+        zones = found.get('portal') or {}
+        for zone in sorted(conf['zones'], key=int):
+            out.append(dict(row('portal', zone, zones.get(zone) or {}, True), hostname=conf['zones'][zone]))
     return out
 
 
@@ -132,11 +161,16 @@ def report(now=None, pidfile=None, pfctl=None, project=None):
     pid = running(pidfile)
     told = sources(conf, found)
     events = [s['last_event'] for s in told if s['last_event']]
+    opened = found.get('open') or {}
     return {
         'enabled': conf['enabled'], 'running': pid is not None, 'pid': pid,
         'project': os.path.isdir(project or PROJECT), 'xgs': conf['xgs'],
         'counts': {'users': len({r['user'] for r in rows}), 'addresses': len(rows),
-                   'shared': sum(1 for r in rows if r['shared'])},
+                   'shared': sum(1 for r in rows if r['shared']), 'clashes': sum(1 for r in rows if r['clash'])},
+        'radius': {'on': conf['radius'], 'found': os.path.isdir(radius.RADACCT), 'sessions': opened.get('radius', 0),
+                   'clients': len(conf['radius_clients'])},
+        'portal': {'on': conf['portal'], 'found': os.path.exists(portal.DB), 'zones': len(conf['zones']),
+                   'sessions': opened.get('portal', 0), 'error': (found.get('errors') or {}).get('portal', '')},
         'tables': tables, 'cut': sum(1 for t in tables if t['cut']),
         'ldap': dict(groups.get('server') or {}, chosen=conf['ldap_server'], nested=conf['nested'],
                      known=len(groups.get('users') or {})),

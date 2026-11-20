@@ -5,7 +5,10 @@
 firewall tells it (host.py, from FreeBSD's own ifconfig, arp and ndp output) and the settings it reads
 (settings.py, from tools/fixtures/config.xml): join, renew, latest wins and the shared mark, the
 lifetime's end, the MAC check, the owner's flush, the tables of groups and of users, the log's counts
-without names, the history, and the lab's A6 - three logons on one client in a row - played through.
+without names, the history, and the lab's A6 - three logons on one client in a row - played through;
+each mapping's source, the clash, a source's logoff - said before a renewal, it ends nothing - a session's
+renewal that takes back no address a later logon took, the RADIUS clients named and the directory's
+realms read from config.xml.
 
     python3 tools/test-engine.py"""
 import json
@@ -18,6 +21,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'src', 'opnsense', 'scripts', 'useridentity'))
 import engine                                                            # noqa: E402
 import events                                                            # noqa: E402
+import expire                                                            # noqa: E402
 import host                                                              # noqa: E402
 import settings                                                          # noqa: E402
 import tables                                                            # noqa: E402
@@ -96,6 +100,24 @@ check('expire: the others older than the lifetime forgotten - no longer shared',
 check('expire: at its time it leaves', engine.expire(state, T0 + 60 + LIFE, LIFE),
       [('left', '192.0.2.20', ('user2', 'expired'))])
 check('expire: the other stays', sorted(state['map']), ['198.51.100.20'])
+
+# Ignore users after the fact (the lab, 2026-11-19, step 7): a shared account put in Ignore users while it holds
+# one address and is noted on another - what it holds ends, its notes go, and so does the clash they made
+state = fresh()
+engine.see(state, ev('WiFi-Staff', '192.0.2.30', T0 + 10), T0 + 10, LIFE)
+engine.see(state, ev('wifi-staff', '192.0.2.31', T0 + 20), T0 + 20, LIFE)
+engine.see(state, ev('user1', '192.0.2.31', T0 + 30), T0 + 30, LIFE)
+state['map']['192.0.2.31']['via'] = {'wifi-staff': 'radius'}
+check('ignored: before, the second address is user1\'s with wifi-staff noted - a clash between sources',
+      (state['map']['192.0.2.31']['user'], engine.clash(state['map']['192.0.2.31'], T0 + 40, LIFE)),
+      ('user1', ['wifi-staff']))
+check('ignored: no name in Ignore users - nothing changes', engine.forget_ignored(state, set()), [])
+check('ignored: the account in Ignore users, in lower case as settings.py reads it - the address it holds leaves',
+      engine.forget_ignored(state, {'wifi-staff'}), [('left', '192.0.2.30', ('WiFi-Staff', 'ignored'))])
+check('ignored: user1 keeps its address, the note and the clash gone',
+      (sorted(state['map']), state['map']['192.0.2.31']['user'], state['map']['192.0.2.31']['others'],
+       state['map']['192.0.2.31'].get('via'), engine.clash(state['map']['192.0.2.31'], T0 + 40, LIFE)),
+      (['192.0.2.31'], 'user1', {}, {}, []))
 
 # the MAC check
 state = fresh()
@@ -372,6 +394,158 @@ with tempfile.TemporaryDirectory() as tmp:
     conf = settings.read(bare)
     check('settings: a value out of its range - the default; no interface chosen - none',
           (conf['lifetime'], conf['port'], conf['stale'], conf['interfaces']), (480 * 60, 514, 300, []))
+    with open(bare, 'w', encoding='utf-8') as handle:
+        handle.write('<opnsense><OPNsense><UserIdentity><general><enabled>1</enabled><radius>1</radius><portal>1</portal>'
+                     '</general></UserIdentity></OPNsense></opnsense>')
+    conf = settings.read(bare)
+    check('settings: RADIUS accounting and the captive portal switched on', (conf['radius'], conf['portal']), (True, True))
+
+# the sources beside the domain controllers (the plan's top-03)
+conf = settings.read(CONFIG)
+check('settings: RADIUS and the portal off by default; the zones switched on by their id, with their description; '
+      'the voucher servers', (conf['radius'], conf['portal'], conf['zones'], conf['vouchers']),
+      (False, False, {'0': 'Guests'}, {'Vouchers'}))
+check('settings: the RADIUS clients named, each address written one way, the entry that is none said',
+      (conf['radius_clients'], conf['bad_radius_clients']), (['192.0.2.40', '2001:db8::40'], ['ap-1']))
+check('settings: the directory\'s realms - the domain its base DN names, and its first label', conf['realms'],
+      {'example.test', 'example'})
+check('realms: a base DN deeper than the domain, spaced, in capitals; one that names no domain; no directory',
+      [settings.realms({'ldap_basedn': 'OU=Staff, DC=Corp ,dc=Example,DC=test'}), settings.realms({'ldap_basedn': 'o=example'}),
+       settings.realms(None), settings.realms({'ldap_basedn': 'DC=averyveryverylongname,DC=test'})],
+      [{'corp.example.test', 'corp'}, set(), set(), {'averyveryverylongname.test', 'averyveryverylo'}])
+check('an address as one string, whatever way it is written; what is none, as it is',
+      [settings.address_key(a) for a in ('2001:DB8:0::40', ' 192.0.2.40 ', 'ap-1')], ['2001:db8::40', '192.0.2.40', 'ap-1'])
+
+
+def evk(user, address, when, kind, number='Start'):
+    return {'id': number, 'kind': kind, 'user': user, 'domain': '', 'address': address, 'time': when, 'logon_type': '',
+            'hostname': ''}
+
+
+state = fresh()
+engine.see(state, evk('user1', '192.0.2.60', T0, 'radius'), T0, LIFE, '192.0.2.40')
+entry = state['map']['192.0.2.60']
+check('a source\'s kind kept on the mapping, with who said it and what',
+      (entry['kind'], entry['source'], entry['event'], entry['via']), ('radius', '192.0.2.40', 'Start', {}))
+engine.see(state, ev('user1', '192.0.2.60', T0 + 10), T0 + 10, LIFE, '192.0.2.10')
+check('renewed by another source: the latest names the source', (entry['kind'], entry['source'], entry['last']),
+      ('ad', '192.0.2.10', T0 + 10))
+engine.see(state, evk('user1', '192.0.2.60', T0 + 5, 'radius', 'Interim-Update'), T0 + 11, LIFE, '192.0.2.40')
+check('an older event of the same user: renews nothing, and names no source', (entry['kind'], entry['source'], entry['last']),
+      ('ad', '192.0.2.10', T0 + 10))
+check('another source gives the address to another user later: latest wins, the address shared',
+      engine.see(state, evk('user2', '192.0.2.60', T0 + 20, 'portal', 'logon'), T0 + 20, LIFE, '0'),
+      [('changed', '192.0.2.60', ('user1', 'user2')), ('shared', '192.0.2.60', ['user1', 'user2'])])
+check('... the one before kept with its source: a clash between the two',
+      (entry['kind'], entry['via'], engine.clash(entry, T0 + 20, LIFE)), ('portal', {'user1': 'ad'}, ['user1']))
+check('... an older event of the first source: noted, still from its source',
+      (engine.see(state, ev('user1', '192.0.2.60', T0 + 15), T0 + 21, LIFE, '192.0.2.10'), entry['others'], entry['via']),
+      ([('noted', '192.0.2.60', 'user1')], {'user1': T0 + 15}, {'user1': 'ad'}))
+check('the clash gone with the lifetime of the one before', engine.clash(entry, T0 + 15 + LIFE, LIFE), [])
+same = fresh()
+engine.see(same, ev('user1', '192.0.2.61', T0), T0, LIFE)
+engine.see(same, ev('user2', '192.0.2.61', T0 + 1), T0 + 1, LIFE)
+check('two users from one source: shared, no clash', (engine.shared(same['map']['192.0.2.61'], T0 + 1, LIFE),
+                                                      engine.clash(same['map']['192.0.2.61'], T0 + 1, LIFE)), (True, []))
+
+# note: a user a source still gives the address to, kept among the others without taking it
+state = fresh()
+engine.see(state, ev('user1', '192.0.2.62', T0), T0, LIFE, '192.0.2.10')
+check('note: another user kept among the others - the address newly shared',
+      engine.note(state, '192.0.2.62', 'user2', 'portal', T0 + 30, LIFE), [('shared', '192.0.2.62', ['user1', 'user2'])])
+check('note: the address still the first user\'s', (state['map']['192.0.2.62']['user'], state['map']['192.0.2.62']['via']),
+      ('user1', {'user2': 'portal'}))
+check('note again: shared already - nothing new to say', engine.note(state, '192.0.2.62', 'user2', 'portal', T0 + 90, LIFE), [])
+check('note of the user that holds it, or of an address not mapped: nothing',
+      (engine.note(state, '192.0.2.62', 'user1', 'portal', T0 + 91, LIFE), engine.note(state, '192.0.2.99', 'u', 'portal', T0, LIFE)),
+      ([], []))
+
+# leave: a source says its user left
+check('leave: the user another holds the address for - only no longer among the others',
+      (engine.leave(state, 'user2', '192.0.2.62'), state['map']['192.0.2.62']['others'], state['map']['192.0.2.62']['via']),
+      ([], {}, {}))
+check('leave: the user that holds it - the address leaves the map',
+      (engine.leave(state, 'user1', '192.0.2.62'), '192.0.2.62' in state['map']),
+      ([('left', '192.0.2.62', ('user1', 'logoff'))], False))
+check('leave: an address not mapped - nothing', engine.leave(state, 'user1', '192.0.2.62'), [])
+
+# leave with the time the source said it (the review's second finding, case B): a Stop read hours late - RADIUS
+# switched on at 23:00, alice's Stop of 01:00 in today's file - ends nothing renewed after it
+state = fresh()
+engine.see(state, ev('alice', '192.0.2.66', T0 + 3600), T0 + 3600, LIFE, '192.0.2.10')
+check('leave said before the mapping was last renewed - a domain controller\'s event a minute ago: nothing ends',
+      (engine.leave(state, 'alice', '192.0.2.66', when=T0 + 600), '192.0.2.66' in state['map']), ([], True))
+check('leave said at the time of the last renewal, or after it: the address leaves',
+      engine.leave(state, 'alice', '192.0.2.66', when=T0 + 3600), [('left', '192.0.2.66', ('alice', 'logoff'))])
+engine.see(state, ev('u1', '192.0.2.67', T0), T0, LIFE, '192.0.2.10')
+engine.note(state, '192.0.2.67', 'u2', 'radius', T0 + 100, LIFE)
+engine.leave(state, 'u2', '192.0.2.67', when=T0 + 50)
+check('a leave said before a user was last noted among the others: still among them',
+      state['map']['192.0.2.67']['others'], {'u2': T0 + 100})
+engine.leave(state, 'u2', '192.0.2.67', when=T0 + 200)
+check('... said after: no longer', (state['map']['192.0.2.67']['others'], state['map']['192.0.2.67']['via']), ({}, {}))
+
+# renew: a RADIUS session's Interim-Update (the review's ninth finding) - 802.1X with a shared wifi-staff account
+# while u1 logs on to the domain from the same device
+state = fresh()
+engine.see(state, evk('wifi-staff', '192.0.2.80', T0, 'radius'), T0, LIFE, '192.0.2.40')
+engine.see(state, ev('u1', '192.0.2.80', T0 + 5, 4624), T0 + 5, LIFE, '192.0.2.10')
+entry = state['map']['192.0.2.80']
+check('renew: the Interim-Update of an address a later logon took - not taken back: noted, the clash shown',
+      (engine.renew(state, evk('wifi-staff', '192.0.2.80', T0 + 600, 'radius', 'Interim-Update'), T0 + 600, LIFE,
+                    '192.0.2.40', T0), entry['user'], entry['others']['wifi-staff'], entry['via'],
+       engine.clash(entry, T0 + 600, LIFE)),
+      ([], 'u1', T0 + 600, {'wifi-staff': 'radius'}, ['wifi-staff']))
+check('... at every interval: the address stays u1\'s',
+      [engine.renew(state, evk('wifi-staff', '192.0.2.80', T0 + 600 * n, 'radius', 'Interim-Update'), T0 + 600 * n, LIFE,
+                    '192.0.2.40', T0) for n in (2, 3)] + [entry['user']], [[], [], 'u1'])
+check('renew: of an address the session\'s user holds - renewed',
+      engine.renew(state, evk('u1', '192.0.2.80', T0 + 1900, 'radius', 'Interim-Update'), T0 + 1900, LIFE, '192.0.2.40',
+                   T0 + 1850), [('renewed', '192.0.2.80', 'u1')])
+check('renew: of an address another user holds by an event no later than the session\'s logon - the session takes it',
+      engine.renew(state, evk('wifi-staff', '192.0.2.80', T0 + 2000, 'radius', 'Interim-Update'), T0 + 2000, LIFE,
+                   '192.0.2.40', T0 + 1950)[0], ('changed', '192.0.2.80', ('u1', 'wifi-staff')))
+check('renew: of an address that is no one\'s - forgotten, or its mapping ended - mapped again',
+      engine.renew(state, evk('wifi-staff', '192.0.2.81', T0 + 2100, 'radius', 'Interim-Update'), T0 + 2100, LIFE,
+                   '192.0.2.40', T0), [('joined', '192.0.2.81', 'wifi-staff')])
+
+# drop: the mappings of a source switched off
+state = fresh()
+engine.see(state, ev('user1', '192.0.2.63', T0), T0, LIFE, '192.0.2.10')
+engine.see(state, evk('user2', '192.0.2.64', T0, 'radius'), T0, LIFE, '192.0.2.40')
+engine.see(state, evk('user3', '192.0.2.65', T0, 'portal', 'logon'), T0, LIFE, '0')
+check('drop: those keep() refuses taken out, said as a source off',
+      (engine.drop(state, lambda e: e['kind'] != 'radius'), sorted(state['map'])),
+      ([('left', '192.0.2.64', ('user2', 'source off'))], ['192.0.2.63', '192.0.2.65']))
+check('MAC check: a portal session\'s address left to the portal, the domain controller\'s checked',
+      engine.check_macs(state, {'192.0.2.63': '02:00:00:00:00:63', '192.0.2.65': '02:00:00:00:00:65'}) +
+      engine.check_macs(state, {'192.0.2.63': '02:00:00:00:00:64', '192.0.2.65': '02:00:00:00:00:66'}),
+      [('left', '192.0.2.63', ('user1', 'mac'))])
+check('... nothing recorded for the portal\'s', state['map']['192.0.2.65']['mac'], '')
+# a domain controller taken out of Settings (the review's seventh finding): none says a user left, so its mappings
+# end at their lifetime as they would have - the minute's run takes no user out of a table for it
+keep = expire.kept(dict(settings.read(os.path.join(ROOT, 'tools', 'fixtures', 'config.xml')), dcs=['192.0.2.11']))
+check('the minute\'s run: a mapping of a domain controller no longer named kept to its lifetime, one naming none too',
+      (keep({'kind': 'ad', 'source': '192.0.2.10'}), keep({'kind': 'ad', 'source': ''}), keep({'user': 'u'})),
+      (True, True, True))
+
+# a map the first part wrote: no kind, no via
+with tempfile.TemporaryDirectory() as tmp:
+    path = os.path.join(tmp, 'map.json')
+    with open(path, 'w') as handle:
+        handle.write(json.dumps({'map': {
+            '192.0.2.70': {'user': 'user1', 'source': '192.0.2.10', 'first': T0, 'last': T0, 'expires': T0 + LIFE,
+                           'mac': '', 'others': {'user9': T0 - 5}},
+            '192.0.2.71': {'user': 'user2', 'kind': 'nonsense', 'first': T0, 'last': T0, 'expires': T0 + LIFE, 'mac': '',
+                           'others': 'x', 'via': {'user7': 'radius'}}}}))
+    found = engine.load(path)['map']
+    check('a map the first part wrote: each mapping a domain controller\'s, each other user too',
+          (found['192.0.2.70']['kind'], found['192.0.2.70']['via'], found['192.0.2.71']['kind'],
+           found['192.0.2.71']['others'], found['192.0.2.71']['via']), ('ad', {'user9': 'ad'}, 'ad', {}, {}))
+    state = {'map': found}
+    engine.expire(state, T0 - 5 + LIFE + 1, LIFE)
+    check('expire: the others past the lifetime forgotten with their sources', (found['192.0.2.70']['others'],
+                                                                                found['192.0.2.70']['via']), ({}, {}))
 
 print('%d of %d checks failed' % (failures, checks) if failures else '%d checks passed' % checks)
 sys.exit(1 if failures else 0)

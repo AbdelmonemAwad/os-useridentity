@@ -4,8 +4,9 @@
     Copyright (c) 2026 Abdelmonem Awad <eg2@live.com>
 
     A config.xml as the tests need it: User Identity's settings, an LDAP entry of System: Access:
-    Servers (its bind password a made-up word), the interfaces, the aliases - the plugin's and the
-    owner's - and os-xgs-npu's cut list. Every address a documentation one, every name an example.
+    Servers (its bind password a made-up word) and a voucher one, the interfaces, the captive portal's
+    zones - one switched on, one off - the aliases - the plugin's and the owner's - and os-xgs-npu's cut
+    list. Every address a documentation one, every name an example.
 -->
 <opnsense>
   <system>
@@ -32,6 +33,11 @@
       <ldap_binddn>CN=svc-bind,CN=Users,DC=example,DC=test</ldap_binddn>
       <ldap_bindpw>not-a-real-one</ldap_bindpw>
       <ldap_timeout>10</ldap_timeout>
+    </authserver>
+    <authserver>
+      <refid>5f0000000000c</refid>
+      <type>voucher</type>
+      <name>Vouchers</name>
     </authserver>
   </system>
   <interfaces>
@@ -71,6 +77,9 @@
         <log_names>0</log_names>
         <history_days>0</history_days>
         <alert_silent>30</alert_silent>
+        <radius>0</radius>
+        <radius_clients>192.0.2.40,2001:DB8::40,ap-1</radius_clients>
+        <portal>0</portal>
       </general>
       <groups>
         <group uuid="11111111-0000-4000-8000-000000000001">
@@ -120,6 +129,23 @@
         </aliases>
       </Alias>
     </Firewall>
+    <captiveportal version="1.0.4">
+      <zones>
+        <zone uuid="44444444-0000-4000-8000-000000000001">
+          <enabled>1</enabled>
+          <zoneid>0</zoneid>
+          <interfaces>opt1</interfaces>
+          <authservers>Example directory,Vouchers</authservers>
+          <description>Guests</description>
+        </zone>
+        <zone uuid="44444444-0000-4000-8000-000000000002">
+          <enabled>0</enabled>
+          <zoneid>1</zoneid>
+          <interfaces>opt1</interfaces>
+          <description>Old</description>
+        </zone>
+      </zones>
+    </captiveportal>
     <XGS version="1.3.0">
       <general>
         <cut_lists>33333333-0000-4000-8000-000000000003,33333333-0000-4000-8000-000000000001</cut_lists>

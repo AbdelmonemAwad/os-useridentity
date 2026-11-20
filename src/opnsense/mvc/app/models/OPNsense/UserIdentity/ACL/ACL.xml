@@ -5,7 +5,7 @@
 <acl>
     <page-firewall-useridentity>
         <name>Firewall: User Identity</name>
-        <description>Allow access to user identity: the addresses mapped to users from domain logons, the aliases it fills, and its settings</description>
+        <description>Allow access to user identity: the addresses mapped to users from domain logons, RADIUS accounting and the captive portal, the aliases it fills, and its settings</description>
         <patterns>
             <pattern>ui/useridentity/*</pattern>
             <pattern>api/useridentity/*</pattern>

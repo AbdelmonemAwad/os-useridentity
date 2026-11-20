@@ -10,7 +10,8 @@
  * configd (Backend), the plugin's model and the Alias model.
  *
  * What is checked: the status script's answer passed on, and one that cannot be read said; the Users
- * and Sources grids' rows; Apply - the aliases, syslog-ng's source and syslog-ng restarted only when it
+ * and Sources grids' rows - each mapping's source and the other users with theirs, a clash marked; each
+ * sender's kind, in status.py's order; Apply - the aliases, syslog-ng's source and syslog-ng restarted only when it
  * changed, the filter, the tables of aliases gone, the collector - in that order, and off the collector
  * stopped and every mapping forgotten, even when the aliases could not be written; nothing for a GET;
  * Forget all; the directory's Test, asked with the name quoted by configd and refused for a name that
@@ -218,27 +219,44 @@ namespace {
     /* the grids */
     Backend::$answers = ['useridentity map' => json_encode(['rows' => [
         ['address' => '192.0.2.20', 'user' => 'user2', 'domain' => 'EXAMPLE', 'groups' => ['G-Staff', 'G-Sales'], 'known' => true,
-            'source' => '192.0.2.10', 'first' => 1794940893, 'last' => 1794940900.5, 'expires' => 1794969700,
-            'mac' => '02:00:00:00:00:14', 'shared' => ['user1']],
+            'kind' => 'ad', 'source' => '192.0.2.10', 'first' => 1794940893, 'last' => 1794940900.5, 'expires' => 1794969700,
+            'mac' => '02:00:00:00:00:14', 'shared' => ['user1'], 'others' => [['user' => 'user1', 'kind' => 'ad']],
+            'clash' => false],
         'not a row',
         ['address' => '2001:db8::20', 'user' => 'user1'],
+        ['address' => '192.0.2.88', 'user' => 'user3', 'kind' => 'portal', 'source' => '0', 'source_name' => 'Guests',
+            'shared' => ['user1'], 'others' => [['user' => 'user1', 'kind' => 'radius'], 'not one', ['user' => 'user9', 'kind' => 'x']],
+            'clash' => true],
     ]])];
     $grid = (new ServiceController())->searchMapAction();
-    check(count($grid['rows']) === 2 && $grid['rows'][0]['groups'] === 'G-Staff, G-Sales' && $grid['rows'][0]['shared'] === 'user1' &&
+    check(count($grid['rows']) === 3 && $grid['rows'][0]['groups'] === 'G-Staff, G-Sales' && $grid['rows'][0]['shared'] === 'user1' &&
         $grid['rows'][0]['last'] === 1794940900 && $grid['rows'][1]['first'] === null && $grid['rows'][1]['known'] === false &&
         $grid['rows'][1]['groups'] === '', 'Users: each address\'s row, its groups and the users sharing it joined, what is missing empty');
-    check($grid['sort'] === 'address' && $grid['fields'] === ['address', 'user', 'groups', 'source', 'mac', 'shared'],
-        'Users: searched by address, user, group, domain controller, MAC and who shares it, by address');
+    check($grid['rows'][0]['kind'] === 'ad' && $grid['rows'][0]['clash'] === false && $grid['rows'][1]['kind'] === 'ad' &&
+        $grid['rows'][1]['others'] === [] && $grid['rows'][2]['kind'] === 'portal' && $grid['rows'][2]['source_name'] === 'Guests' &&
+        $grid['rows'][2]['clash'] === true &&
+        $grid['rows'][2]['others'] === [['user' => 'user1', 'kind' => 'radius'], ['user' => 'user9', 'kind' => 'ad']],
+        'Users: each mapping\'s source - a map of the first part\'s a domain controller\'s - the other users with theirs, a clash marked');
+    check($grid['sort'] === 'address' &&
+        $grid['fields'] === ['address', 'user', 'groups', 'kind', 'source', 'source_name', 'mac', 'shared'],
+        'Users: searched by address, user, group, source, MAC and who shares it, by address');
     Backend::$answers = ['useridentity status' => json_encode(['sources' => [
         ['address' => '192.0.2.10', 'named' => true, 'hostname' => 'DC1.example.test', 'last_line' => 1794940900,
             'last_event' => 1794940898, 'late' => 2.0, 'accepted' => 5, 'joined' => 1, 'renewed' => 4, 'stale' => 1,
             'refused' => 3, 'reasons' => ['computer' => 2, 'not a user' => 1], 'other' => 7],
         ['address' => '192.0.2.2', 'named' => false, 'refused' => 1, 'reasons' => ['not a domain controller' => 1]],
+        ['kind' => 'radius', 'address' => '192.0.2.40', 'named' => true, 'hostname' => 'ap1', 'accepted' => 2, 'ended' => 1,
+            'reasons' => ['mac authentication' => 1]],
+        ['kind' => 'portal', 'address' => '0', 'named' => true, 'hostname' => 'Guests', 'ended' => 2],
     ]])];
     $grid = (new ServiceController())->searchSourcesAction();
-    check(count($grid['rows']) === 2 && $grid['rows'][0]['reasons'] === [['reason' => 'computer', 'count' => 2],
+    check(count($grid['rows']) === 4 && $grid['rows'][0]['reasons'] === [['reason' => 'computer', 'count' => 2],
         ['reason' => 'not a user', 'count' => 1]] && $grid['rows'][0]['late'] === 2.0 && $grid['rows'][1]['named'] === false &&
         $grid['rows'][1]['last_line'] === null, 'Sources: each sender\'s row, its refusals by reason');
+    check(array_column($grid['rows'], 'kind') === ['ad', 'ad', 'radius', 'portal'] &&
+        array_column($grid['rows'], 'order') === [0, 1, 2, 3] && array_column($grid['rows'], 'ended') === [0, 0, 1, 2] &&
+        $grid['sort'] === 'order' && $grid['fields'] === ['kind', 'address', 'hostname'],
+        'Sources: each sender\'s kind - a domain controller\'s when none is said - and what it ended, in status.py\'s order');
 
     /* Apply */
     $controller = new ServiceController();

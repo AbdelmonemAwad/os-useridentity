@@ -28,7 +28,8 @@ class ServiceController extends ApiControllerBase
     }
 
     /**
-     * the Users tab's grid: the live map, an address a row
+     * the Users tab's grid: the live map, an address a row - which source mapped it, and the other
+     * users within the lifetime with the source each came from (a clash when that is another)
      */
     public function searchMapAction()
     {
@@ -37,25 +38,49 @@ class ServiceController extends ApiControllerBase
             if (!is_array($row)) {
                 continue;
             }
+            $others = [];
+            foreach ((array)($row['others'] ?? []) as $other) {
+                if (is_array($other)) {
+                    $others[] = ['user' => (string)($other['user'] ?? ''), 'kind' => self::kind($other['kind'] ?? '')];
+                }
+            }
             $rows[] = [
                 'address' => (string)($row['address'] ?? ''),
                 'user' => (string)($row['user'] ?? ''),
                 'domain' => (string)($row['domain'] ?? ''),
                 'groups' => implode(', ', array_map('strval', (array)($row['groups'] ?? []))),
                 'known' => !empty($row['known']),
+                'kind' => self::kind($row['kind'] ?? ''),
                 'source' => (string)($row['source'] ?? ''),
+                'source_name' => (string)($row['source_name'] ?? ''),
                 'first' => isset($row['first']) ? (int)$row['first'] : null,
                 'last' => isset($row['last']) ? (int)$row['last'] : null,
                 'expires' => isset($row['expires']) ? (int)$row['expires'] : null,
                 'mac' => (string)($row['mac'] ?? ''),
                 'shared' => implode(', ', array_map('strval', (array)($row['shared'] ?? []))),
+                'others' => $others,
+                'clash' => !empty($row['clash']),
             ];
         }
-        return $this->searchRecordsetBase($rows, ['address', 'user', 'groups', 'source', 'mac', 'shared'], 'address');
+        return $this->searchRecordsetBase(
+            $rows,
+            ['address', 'user', 'groups', 'kind', 'source', 'source_name', 'mac', 'shared'],
+            'address'
+        );
     }
 
     /**
-     * the Sources tab's grid: each domain controller named, then any other sender heard
+     * a source's kind as the page knows them: ad, radius or portal - a map the first part wrote names
+     * none, and every mapping of it was a domain controller's
+     */
+    private static function kind($kind)
+    {
+        return in_array((string)$kind, ['ad', 'radius', 'portal'], true) ? (string)$kind : 'ad';
+    }
+
+    /**
+     * the Sources tab's grid: each domain controller named, then any other sender heard, then the
+     * RADIUS clients heard and the captive portal's zones - in that order unless sorted otherwise
      */
     public function searchSourcesAction()
     {
@@ -69,6 +94,8 @@ class ServiceController extends ApiControllerBase
                 $reasons[] = ['reason' => (string)$reason, 'count' => (int)$count];
             }
             $rows[] = [
+                'order' => count($rows),
+                'kind' => self::kind($row['kind'] ?? ''),
                 'address' => (string)($row['address'] ?? ''),
                 'named' => !empty($row['named']),
                 'hostname' => (string)($row['hostname'] ?? ''),
@@ -78,13 +105,14 @@ class ServiceController extends ApiControllerBase
                 'accepted' => (int)($row['accepted'] ?? 0),
                 'joined' => (int)($row['joined'] ?? 0),
                 'renewed' => (int)($row['renewed'] ?? 0),
+                'ended' => (int)($row['ended'] ?? 0),
                 'stale' => (int)($row['stale'] ?? 0),
                 'refused' => (int)($row['refused'] ?? 0),
                 'reasons' => $reasons,
                 'other' => (int)($row['other'] ?? 0),
             ];
         }
-        return $this->searchRecordsetBase($rows, ['address', 'hostname'], 'address');
+        return $this->searchRecordsetBase($rows, ['kind', 'address', 'hostname'], 'order');
     }
 
     /**

@@ -4,7 +4,7 @@
 #
 PLUGIN_NAME=		useridentity
 PLUGIN_VERSION=		1.0.0
-PLUGIN_COMMENT=		Firewall aliases by user and group, from domain logons
+PLUGIN_COMMENT=		Firewall aliases by user and group, from logons, RADIUS and the portal
 PLUGIN_MAINTAINER=	eg2@live.com
 
 .include "../../Mk/plugins.mk"
