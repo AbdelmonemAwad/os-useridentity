@@ -23,14 +23,16 @@ Who is behind an address: logons read from the Active Directory domain controlle
 >
 > **Written, not released (2026-11-18).** The first part is here: the engine and the Active Directory
 > source - each address mapped to its user from the domain controllers' logon events, the user's groups
-> asked of the directory, a table for each group chosen and each user named. Off by default. It has
-> not run on an appliance yet: what was run is under [What is tested](#what-is-tested).
+> asked of the directory, a table for each group chosen and each user named. Off by default. ~~It has
+> not run on an appliance yet.~~ It ran on the second XGS 3300, the XGS 136 and a plain OPNsense on
+> 2026-11-18: what was run is under [What is tested](#what-is-tested).
 >
-> **The second part, written 2026-11-19 and corrected after its review on 2026-11-20, not released:**
+> **The second part, written 2026-11-19 and corrected after its review ~~on 2026-11-20~~ the same day, not released:**
 > RADIUS accounting - of the RADIUS clients Settings names - and the captive portal's sessions as
 > sources beside the domain controllers - each off until Settings turns it on - the latest logon
 > winning an address whichever source it came from, and the page showing two sources that clash over
-> one. It has not run on an appliance: what was run is under [What is tested](#what-is-tested).
+> one. ~~It has not run on an appliance.~~ It ran on the second XGS 3300 and the XGS 136 the same day,
+> after its review: what was run is under [What is tested](#what-is-tested).
 
 <p align="center"><b>Contents:</b> <a href="#what-it-does">What it does</a> &middot; <a href="#how-a-logon-becomes-a-table">How a logon becomes a table</a> &middot; <a href="#radius-and-the-captive-portal">RADIUS and the captive portal</a> &middot; <a href="#not-yet-and-why">Not yet, and why</a> &middot; <a href="#what-is-tested">What is tested</a> &middot; <a href="#installation">Installation</a> &middot; <a href="#updates">Updates</a> &middot; <a href="#where-it-fits">Where it fits</a> &middot; <a href="#licence">Licence</a></p>
 
@@ -420,7 +422,7 @@ Python 3.14, PHP 8.5 and node 24, every one of the first part's with them:
 - **the rest** - `php -l`, `py_compile` and pyflakes, `sh -n`, XML and JSON, nothing private, no Arabic in
   the code, the copyright line, and the page kit (kit).
 
-On 2026-11-20, after the second part's review, from this branch, away from an appliance - the same
+On ~~2026-11-20~~ 2026-11-19, after the second part's review, from this branch, away from an appliance - the same
 checks, with one for each thing the review found, each failing without its fix:
 
 - **RADIUS accounting and the captive portal** - `tools/test-sources.py`, 98 checks now: a client not
@@ -455,6 +457,35 @@ checks, with one for each thing the review found, each failing without its fix:
 - **the rest** - the other checks as on 2026-11-19, each passing, and `php -l`, `py_compile` and
   pyflakes, `sh -n`, XML and JSON, nothing private, no Arabic in the code, the copyright line, and the
   page kit (kit).
+
+On the appliances the same day, after its review, as a user meets it - the second XGS 3300 with the lab's
+Windows test domain, os-freeradius installed for the test and removed after, and the XGS 136 - each put
+back as found after it (config.xml, its backups and the packages):
+
+- **an update over the first part** - its settings, map and tables kept;
+- **the gate** - a Start from a RADIUS client not named refused ("not a RADIUS client named"); named, it
+  mapped in 0.7 s, into the user's and the group's tables;
+- **roaming** - a device's session moved from one client to another, its first Stop read after the second
+  Start: the address stayed, with no cut, and left 1 s after the second Stop;
+- **a Stop read late** - one held for an hour (Acct-Delay-Time 3600) did not end a newer domain logon; the
+  same Stop said at once ended it;
+- **Accounting-On** naming one NAS ended its sessions alone;
+- **Interim-Update** from a shared RADIUS account did not take back an address a domain logon had taken: the
+  clash was shown, and nothing was cut;
+- **the map not writable** - with a read-only mount over the plugin's folder the mapping stayed and an error
+  was logged; unlocked, it left in 0.6 s, counted once;
+- **files** - an old day's detail file and a `.gz` copy not read; the state written at most every 10 s;
+- **sources taken out of Settings** - without its domain controller, the logon mapping stayed; without a
+  RADIUS client, what it mapped left at the next minute and the other client's stayed;
+- **the XGS 136** - the update, the gate, roaming and renewal, then the removal with nothing left.
+
+Found by that lab and fixed in this branch: an account put in Ignore users kept the clash it made until its
+note aged out - the minute's run now forgets what an ignored account holds, and tried again on the box the
+clash ended at the next minute; and FreeRADIUS writes the sender's address as NAS-IP-Address into an
+Accounting-On that names none, which the Sources help and this README now say.
+
+Not run on an appliance: the captive portal with a server other than the directory - it needs a local test
+user made on the firewall, which waits - and the page in a browser.
 
 ## Installation
 
